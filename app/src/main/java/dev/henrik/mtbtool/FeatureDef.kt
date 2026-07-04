@@ -85,6 +85,21 @@ val ALL_FEATURES: List<FeatureDef> = listOf(
         }
     ),
     FeatureDef(
+        id = "fdd_ul_mimo",
+        label = "Disable FDD-only UL MIMO",
+        reads = listOf(NR_BASE + "cap_control_fdd_ul_mimo"),
+        writes = listOf(
+            NvWrite(
+                path = NR_BASE + "cap_control_fdd_ul_mimo",
+                bytes = "0 0"
+            )
+        ),
+        isDisabled = { byteArrays ->
+            val b = byteArrays.firstOrNull() ?: return@FeatureDef true
+            b.size >= 2 && b[0] == 0 && b[1] == 0
+        }
+    ),
+    FeatureDef(
         id = "nr_ulca",
         label = "Disable NR UL-CA",
         reads = listOf(

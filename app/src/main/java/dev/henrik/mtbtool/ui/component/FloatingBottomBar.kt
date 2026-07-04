@@ -26,8 +26,6 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -132,11 +130,6 @@ fun FloatingBottomBar(
         MiuixTheme.colorScheme.surfaceContainer
     }
 
-    val hapticFeedback = LocalHapticFeedback.current
-
-    var lastDragMoveTime by remember { mutableLongStateOf(0L) }
-    var dragHapticJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-
     val tabsBackdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
@@ -190,24 +183,9 @@ fun FloatingBottomBar(
                 globalTouchX in 0f..totalWidthPx
             },
             onDragStarted = {
-                lastDragMoveTime = System.currentTimeMillis()
-                dragHapticJob?.cancel()
-                dragHapticJob = animationScope.launch {
-                    while (true) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastDragMoveTime < 32L) {
-                            hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
-                        kotlinx.coroutines.delay(16L)
-                    }
-                }
             },
             onDragStopped = {
-                dragHapticJob?.cancel()
                 val targetIndex = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
-                if (targetIndex != currentIndex) {
-                    hapticFeedback.performHapticFeedback(HapticFeedbackType.Confirm)
-                }
                 currentIndex = targetIndex
                 animateToValue(targetIndex.toFloat())
                 animationScope.launch {
@@ -215,7 +193,6 @@ fun FloatingBottomBar(
                 }
             },
             onDrag = { _, dragAmount ->
-                if (abs(dragAmount.x) > 0.5f) lastDragMoveTime = System.currentTimeMillis()
                 if (tabWidthPx > 0) {
                     updateValue(
                         (targetValue + dragAmount.x / tabWidthPx * if (isLtr) 1f else -1f)
@@ -233,7 +210,7 @@ fun FloatingBottomBar(
         snapshotFlow { selectedIndex() }.collectLatest { currentIndex = it }
     }
     androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { dragHapticJob?.cancel() }
+        onDispose { }
     }
     LaunchedEffect(dampedDragAnimation) {
         snapshotFlow { currentIndex }.drop(1).collectLatest { index ->
