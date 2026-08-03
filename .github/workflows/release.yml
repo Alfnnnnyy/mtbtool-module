@@ -116,7 +116,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v${{ steps.ver.outputs.VC }}" \
-            --title "MTB Tool v${{ steps.ver.outputs.VN }}" \
+            --title "MTB Tool ${{ steps.ver.outputs.VN }}" \
             --notes-file release-notes.tmp \
             "${{ env.ZIP }}" "${{ env.ZIP }}.sha256" \
             || { echo "release may already exist"; exit 1; }
