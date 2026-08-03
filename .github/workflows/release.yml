@@ -1,0 +1,122 @@
+name: release
+
+# Auto-release: builds + releases IN THIS RUN when module.prop versionCode
+# is bumped on main. Also supports manual tag pushes (v*) and dispatch.
+# Pitfall-avoidance: GITHUB_TOKEN tag pushes do NOT trigger new workflows,
+# so the tag is created and the release made in the same run.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  version-check:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.check.outputs.new_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compare versionCode with last tag
+        id: check
+        run: |
+          VC=$(grep '^versionCode=' module.prop | cut -d= -f2 | tr -d '\r')
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          LAST_VC=0
+          if [ -n "$LAST_TAG" ]; then
+            LAST_VC=$(git show "$LAST_TAG:module.prop" 2>/dev/null | grep '^versionCode=' | cut -d= -f2 | tr -d '\r')
+            LAST_VC=${LAST_VC:-0}
+          fi
+          NEW=false
+          if [ -z "$LAST_TAG" ] || [ "$VC" -gt "$LAST_VC" ]; then
+            NEW=true
+          fi
+          echo "current=$VC last=$LAST_VC tag=$LAST_TAG new=$NEW"
+          echo "new_version=$NEW" >> "$GITHUB_OUTPUT"
+
+  build-release:
+    needs: version-check
+    if: github.ref_type == 'tag' || needs.version-check.outputs.new_version == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: ver
+        run: |
+          echo "VC=$(grep '^versionCode=' module.prop | cut -d= -f2 | tr -d '\r')" >> "$GITHUB_OUTPUT"
+          echo "VN=$(grep '^version=' module.prop | cut -d= -f2 | tr -d '\r')" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build mtbctl (aarch64-linux-android)
+        env:
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          RUSTFLAGS: -C strip=symbols
+        run: |
+          rustup target add aarch64-linux-android
+          cargo build --release --target aarch64-linux-android --manifest-path backend/Cargo.toml
+          mkdir -p bin
+          cp backend/target/aarch64-linux-android/release/mtbctl bin/mtbctl
+          # arch guard — a stray host binary in the zip is a broken module
+          file bin/mtbctl
+          file bin/mtbctl | grep -q 'aarch64' || { echo "WRONG ARCH"; exit 1; }
+
+      - name: Build WebUI
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+          ls ../webroot/assets/
+          grep -q 'MTB Control' ../webroot/assets/index-*.js || { echo "marker missing"; exit 1; }
+          grep -q 'kernelsu' ../webroot/assets/index-*.js || { echo "kernelsu import missing"; exit 1; }
+
+      - name: Package module zip
+        run: |
+          ZIP="MTB-Tool-v${{ steps.ver.outputs.VN }}.zip"
+          zip -r9 "$ZIP" module.prop customize.sh service.sh action.sh uninstall.sh bin webroot LICENSE -x '.*'
+          sha256sum "$ZIP" > "$ZIP.sha256"
+          unzip -l "$ZIP"
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Generate changelog
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          { echo "# MTB Tool v${{ steps.ver.outputs.VN }}"; echo; echo "## Changes"; \
+            if [ -n "$LAST_TAG" ]; then git log --oneline --no-decorate "$LAST_TAG"..HEAD | head -80; \
+            else git log --oneline --no-decorate -20 HEAD; fi; } > release-notes.tmp
+
+      - name: Create tag (best-effort, same run)
+        run: |
+          git tag "v${{ steps.ver.outputs.VC }}" && git push origin "v${{ steps.ver.outputs.VC }}" || true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.ver.outputs.VC }}" \
+            --title "MTB Tool v${{ steps.ver.outputs.VN }}" \
+            --notes-file release-notes.tmp \
+            "${{ env.ZIP }}" "${{ env.ZIP }}.sha256" \
+            || { echo "release may already exist"; exit 1; }

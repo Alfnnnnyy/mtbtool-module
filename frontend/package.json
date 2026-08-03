@@ -1,0 +1,25 @@
+{
+  "name": "mtbtool-webui",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lucide-svelte": "0.474.0",
+    "svelte": "5.19.7"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "5.0.3",
+    "typescript": "5.7.3",
+    "vite": "6.0.11",
+    "vitest": "3.0.4"
+  }
+}

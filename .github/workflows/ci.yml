@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'module.prop'
+      - 'tests/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Rust backend (cargo test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test --manifest-path backend/Cargo.toml --release
+
+  smoke:
+    name: Backend protocol smoke (fake mtb)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release --manifest-path backend/Cargo.toml
+      - name: Smoke
+        run: bash tests/smoke.sh
+
+  frontend:
+    name: WebUI (test + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        working-directory: frontend
+        run: npm install
+      - name: Test
+        working-directory: frontend
+        run: npm test
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+      - name: Bundle sanity (marker + kernelsu external)
+        run: |
+          ls webroot/assets/
+          grep -l 'MTB Control' webroot/assets/index-*.js >/dev/null || { echo "marker missing"; exit 1; }
+          grep -l 'kernelsu' webroot/assets/index-*.js >/dev/null || { echo "kernelsu import missing"; exit 1; }
+          test -f webroot/index.html || { echo "no index.html"; exit 1; }

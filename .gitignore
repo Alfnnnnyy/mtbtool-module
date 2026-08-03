@@ -1,0 +1,11 @@
+# Build artifacts — never commit
+bin/
+backend/target/
+frontend/node_modules/
+frontend/dist/
+webroot/
+*.value
+*.local
+.DS_Store
+tests/.zt/
+tests/.zt-bin/

@@ -1,0 +1,422 @@
+<script lang="ts">
+  import { api } from '../bridge';
+  import { FileCode, Upload, Search, CheckCircle2, AlertCircle } from 'lucide-svelte';
+
+  interface ReadNvResult {
+    ok: boolean;
+    bytes?: string;
+    absent?: boolean;
+    exit?: number;
+    error?: string;
+  }
+
+  interface ImportCommand {
+    slot: number;
+    op: 'w' | 'd';
+    path: string;
+    bytes?: string;
+  }
+
+  interface ImportPreviewResult {
+    ok: boolean;
+    commands?: ImportCommand[];
+    errors?: string[];
+  }
+
+  interface ImportApplyResult {
+    ok: boolean;
+    results?: Array<{
+      slot: number;
+      op: string;
+      path: string;
+      ok: boolean;
+      exit: number;
+      backup_id?: string;
+    }>;
+    ok_count?: number;
+    fail_count?: number;
+  }
+
+  const BASE_PATHS = [
+    '/nv/item_files/modem/lte/rrc/efs/',
+    '/nv/item_files/modem/nr5g/RRC/',
+    '/nv/item_files/modem/mmode/'
+  ];
+
+  let modeTab = $state<'single' | 'batch'>('single');
+  let selectedBase = $state(BASE_PATHS[0]);
+  let subPath = $state('cap_control_nrca_2x_f_plus_t_band_combos');
+  let slot = $state(0);
+
+  let readLoading = $state(false);
+  let readResult = $state<ReadNvResult | null>(null);
+  let readError = $state<string | null>(null);
+
+  // Import section
+  let jsonString = $state('');
+  let importPreview = $state<ImportPreviewResult | null>(null);
+  let importApplying = $state(false);
+  let importResults = $state<ImportApplyResult | null>(null);
+  let importError = $state<string | null>(null);
+
+  let textareaElem = $state<HTMLTextAreaElement | undefined>(undefined);
+
+  function fullPath(): string {
+    if (subPath.startsWith('/')) return subPath;
+    return selectedBase + subPath;
+  }
+
+  async function handleReadNv() {
+    readLoading = true;
+    readResult = null;
+    readError = null;
+    try {
+      const path = fullPath();
+      const res = await api(`nv read ${path}`, { slot: String(slot) }) as ReadNvResult;
+      readResult = res;
+    } catch (e: unknown) {
+      readError = e instanceof Error ? e.message : String(e);
+    } finally {
+      readLoading = false;
+    }
+  }
+
+  function handleFileUpload(e: Event) {
+    const target = e.target as HTMLInputElement;
+    if (!target.files || target.files.length === 0) return;
+    const file = target.files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+      jsonString = String(reader.result || '');
+      if (textareaElem) {
+        textareaElem.value = jsonString;
+        textareaElem.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      handlePreviewImport();
+    };
+    reader.readAsText(file);
+  }
+
+  async function handlePreviewImport() {
+    if (!jsonString.trim()) return;
+    importError = null;
+    importResults = null;
+    try {
+      const res = await api('import preview', { json: jsonString }) as ImportPreviewResult;
+      importPreview = res;
+    } catch (e: unknown) {
+      importError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function handleApplyImport() {
+    if (!importPreview || !importPreview.commands) return;
+    importApplying = true;
+    importError = null;
+    try {
+      const res = await api('import apply', { json: jsonString }) as ImportApplyResult;
+      importResults = res;
+      importPreview = null;
+    } catch (e: unknown) {
+      importError = e instanceof Error ? e.message : String(e);
+    } finally {
+      importApplying = false;
+    }
+  }
+
+  function formatHexColorBytes(hexStr: string): Array<{ byte: string; colorClass: string }> {
+    const clean = hexStr.replace(/\s+/g, '');
+    const res: Array<{ byte: string; colorClass: string }> = [];
+    for (let i = 0; i < clean.length; i += 2) {
+      const b = clean.substring(i, i + 2);
+      const val = parseInt(b, 16);
+      let colorClass = 'byte-zero';
+      if (val === 1) colorClass = 'byte-one';
+      else if (val > 1) colorClass = 'byte-val';
+      res.push({ byte: b, colorClass });
+    }
+    return res;
+  }
+</script>
+
+<div class="nvimport-screen">
+  <!-- Screen Header -->
+  <div class="screen-header">
+    <div>
+      <h1 class="screen-title">NV Explorer & Import</h1>
+      <p class="screen-subtitle">Inspect EFS File Paths & Execute Batch Operations</p>
+    </div>
+  </div>
+
+  <!-- Segmented Control Mode Switcher -->
+  <div class="segmented-control">
+    <button
+      class={`segmented-tab ${modeTab === 'single' ? 'active' : ''}`}
+      onclick={() => modeTab = 'single'}
+    >
+      <Search size={14} /> Single NV Read / Write
+    </button>
+    <button
+      class={`segmented-tab ${modeTab === 'batch' ? 'active' : ''}`}
+      onclick={() => modeTab = 'batch'}
+    >
+      <FileCode size={14} /> Batch Import JSON
+    </button>
+  </div>
+
+  {#if modeTab === 'single'}
+    <!-- Single Path NV Reader Card -->
+    <div class="card reader-card">
+      <div class="section-label">READ NV EFS ITEM</div>
+      <div class="path-builder">
+        <div class="field-group">
+          <label for="base-path">Base Path Prefix:</label>
+          <select id="base-path" class="select" bind:value={selectedBase}>
+            {#each BASE_PATHS as bp}
+              <option value={bp}>{bp}</option>
+            {/each}
+            <option value="">Custom Absolute Path</option>
+          </select>
+        </div>
+
+        <div class="field-group">
+          <label for="item-path">Item Subpath / Absolute Target:</label>
+          <input id="item-path" type="text" class="input mono" bind:value={subPath} placeholder="e.g. cap_control..." />
+        </div>
+
+        <div class="row-flex">
+          <div class="field-group slot-group">
+            <label for="nv-slot">SIM Slot:</label>
+            <select id="nv-slot" class="select" bind:value={slot}>
+              <option value={0}>Slot 0</option>
+              <option value={1}>Slot 1</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick={handleReadNv} disabled={readLoading}>
+            {readLoading ? 'Reading...' : 'Read NV Path'}
+          </button>
+        </div>
+      </div>
+
+      {#if readError}
+        <div class="card status-err-card">{readError}</div>
+      {/if}
+
+      {#if readResult}
+        <div class="result-box">
+          {#if readResult.absent}
+            <div class="chip status-info">NV Item Absent / Empty (Modem Default)</div>
+          {:else if readResult.bytes}
+            <div class="hex-dump card">
+              <span class="caption">Hex Dump Payload ({readResult.bytes.length / 2} bytes):</span>
+              <div class="hex-bytes mono">
+                {#each formatHexColorBytes(readResult.bytes) as bItem}
+                  <span class={`hex-byte ${bItem.colorClass}`}>{bItem.byte}</span>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {:else}
+    <!-- JSON File Import Card -->
+    <div class="card import-card">
+      <div class="section-label">BATCH NV IMPORT PAYLOAD</div>
+      
+      <div class="file-picker">
+        <label class="btn btn-secondary">
+          <Upload size={16} /> Load JSON File
+          <input type="file" accept=".json" onchange={handleFileUpload} hidden />
+        </label>
+        <span class="caption">Select bulk-import JSON configuration</span>
+      </div>
+
+      <textarea
+        bind:this={textareaElem}
+        class="textarea mono"
+        rows="8"
+        placeholder="Paste JSON import payload..."
+        bind:value={jsonString}
+        oninput={handlePreviewImport}
+      ></textarea>
+
+      {#if importError}
+        <div class="card status-err-card">{importError}</div>
+      {/if}
+
+      {#if importPreview && importPreview.commands}
+        <div class="preview-table-box">
+          <div class="caption">Import Commands Preview ({importPreview.commands.length} operations):</div>
+          <div class="table-scroll">
+            <table class="preview-table">
+              <thead>
+                <tr>
+                  <th>Slot</th>
+                  <th>Op</th>
+                  <th>Path</th>
+                  <th>Payload (Hex)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each importPreview.commands as cmd}
+                  <tr>
+                    <td>{cmd.slot}</td>
+                    <td><span class={`op-chip ${cmd.op}`}>{cmd.op === 'w' ? 'WRITE' : 'DELETE'}</span></td>
+                    <td class="mono path-cell">{cmd.path}</td>
+                    <td class="mono hex-cell">{cmd.bytes || '-'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+
+          <button class="btn btn-danger apply-import-btn" onclick={handleApplyImport} disabled={importApplying}>
+            {importApplying ? 'Applying Import...' : 'Confirm & Apply Bulk Import'}
+          </button>
+        </div>
+      {/if}
+
+      {#if importResults}
+        <div class="card import-results">
+          <div class="results-header">
+            <CheckCircle2 class="icon-success" />
+            <strong style="color: var(--text-primary);">
+              Import Executed: {importResults.ok_count} Success, {importResults.fail_count} Failed
+            </strong>
+          </div>
+          <ul class="results-list">
+            {#each importResults.results || [] as r}
+              <li class={r.ok ? 'res-ok' : 'res-fail'}>
+                <span class="mono">[{r.op.toUpperCase()}] Slot {r.slot}: {r.path}</span>
+                <span class="caption">{r.ok ? 'OK' : `Failed (Exit ${r.exit})`}</span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .nvimport-screen {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .screen-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .screen-title {
+    font-size: 24px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+  }
+  .screen-subtitle {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .section-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 0.4px;
+  }
+  .reader-card, .import-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .path-builder {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .field-group label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .row-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 12px;
+  }
+  .slot-group {
+    width: 140px;
+  }
+  .hex-dump {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background-color: var(--surface-1);
+  }
+  .hex-bytes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 13px;
+  }
+  .hex-byte {
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .byte-zero { color: var(--text-muted); }
+  .byte-one { color: var(--primary); font-weight: bold; }
+  .byte-val { color: var(--success); font-weight: bold; }
+
+  .file-picker {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .table-scroll {
+    overflow-x: auto;
+  }
+  .preview-table-box {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .preview-table th, .preview-table td {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .preview-table th {
+    background-color: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .op-chip.w { color: var(--primary); font-weight: bold; }
+  .op-chip.d { color: var(--danger); font-weight: bold; }
+  .path-cell { word-break: break-all; }
+
+  .apply-import-btn {
+    align-self: flex-end;
+  }
+  .status-err-card {
+    border-color: var(--danger);
+    background-color: rgba(255, 97, 97, 0.05);
+  }
+  .caption {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .icon-success {
+    color: var(--success);
+  }
+</style>
