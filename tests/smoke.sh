@@ -140,16 +140,13 @@ check "verify ok despite mismatch (semantic deadlock fix)" "echo '$out' | grep -
 check "verify reports all_match false" "echo '$out' | grep -q '\"all_match\":false'"
 check "verify integrity still ok" "echo '$out' | grep -q '\"integrity_ok\":true'"
 # integrity tamper (bad sha256) must fail integrity_ok
-python3 - "$WORK" <<'PYEOF'
-import json, glob, sys
-root = sys.argv[1]
-for f in glob.glob(root + '/data/backups/*.json'):
-    if 'latest.json' in f:
-        continue
-    d = json.load(open(f))
-    d['entries'][0]['sha256'] = '00' * 32
-    json.dump(d, open(f, 'w'))
-    break
+python3 - "$WORK" "$vid" <<'PYEOF'
+import json, sys
+root, vid = sys.argv[1], sys.argv[2]
+f = root + '/data/backups/' + vid + '.json'
+d = json.load(open(f))
+d['entries'][0]['sha256'] = '00' * 32
+json.dump(d, open(f, 'w'))
 PYEOF
 out=$("$BIN" backup verify "$vid" || true)
 check "verify integrity tamper -> integrity_ok false" "echo '$out' | grep -q '\"integrity_ok\":false'"
