@@ -6,6 +6,26 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.14] - 2026-08-04
+
+### Fixed (audit round: write-state contract + tested orchestrator in production)
+- **nv.write response contract**: every response now carries
+  `write_attempted`, `stage` (validation/lock/read_before/backup/write/verify/
+  rollback), `backup_id`, `verified`, `rollback_attempted`,
+  `rollback_verified`. "Nothing written" is only ever derived from
+  `write_attempted:false`; a transport failure without payload reports
+  "Apply result unavailable — write state is unknown" and never invents a
+  verdict. A live re-read follows every outcome: confirmed current byte only
+  from a successful read, otherwise "current modem state is unknown".
+- **Tested orchestrator is the production path**: Features.svelte now uses
+  the DI-tested `runNrModeApply` (helpers.ts) instead of duplicated inline
+  composition — 4 new integration tests with mocked rpc (transport error +
+  failing re-read, transport error + good re-read, write_attempted:false,
+  write_attempted:true + rollback).
+- **Restore hardening**: `integrity_ok` must be `=== true` — a missing field
+  fails closed and keeps Restore disabled.
+- Smoke: contract fields asserted for success + validation-failure paths.
+
 ## [1.0.13] - 2026-08-04
 
 ### Fixed (audit round: NR failure path + restore id hardening)

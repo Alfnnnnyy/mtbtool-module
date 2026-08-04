@@ -59,3 +59,85 @@ export function composeNrModeResultMsg(
   }
   return `${base} — live re-read failed — current modem state is unknown`;
 }
+
+export interface NrReReadResult {
+  ok: boolean;
+  value: number | null;
+  byte: string;
+  error: string;
+}
+
+export interface NrWritePayload {
+  ok?: boolean;
+  error?: string;
+  verified?: boolean;
+  write_attempted?: boolean;
+  stage?: string;
+  backup_id?: string | null;
+  rollback_attempted?: boolean;
+  rollback_verified?: boolean;
+}
+
+/**
+ * Orchestrator for the NR-mode apply + confirm flow (the REAL production
+ * path used by Features.svelte; unit-tested with injected mocks).
+ *
+ * Message rules:
+ * - "nothing written" ONLY when the backend explicitly reports
+ *   write_attempted === false (validation/lock/read_before/backup stages)
+ * - a rejected RPC with NO payload (transport loss, empty stdout) never
+ *   claims "nothing written" — it says the write state is unknown
+ * - after every outcome a live re-read decides "confirmed current" vs
+ *   "current state unknown"
+ */
+export async function runNrModeApply(
+  write: () => Promise<unknown>,
+  reRead: () => Promise<NrReReadResult>,
+): Promise<string> {
+  let base: string;
+  try {
+    const res = (await write()) as NrWritePayload;
+    if (res && res.ok === true && res.verified === true) {
+      base = `NR mode applied and verified (backup ${res.backup_id || '?'})`;
+    } else if (res && res.verified === false) {
+      base = `NR mode written but read-back verification FAILED (backup ${res.backup_id || '?'})` +
+        (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '');
+    } else if (res && res.ok === false) {
+      if (res.write_attempted === true) {
+        base = `Apply attempted (stage ${res.stage || '?'}): ${res.error || 'verification failed'}` +
+          (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '') +
+          (res.backup_id ? ` (backup ${res.backup_id})` : '');
+      } else {
+        // backend explicitly says the write never reached the modem write stage
+        base = `Apply failed (nothing written, stage ${res.stage || '?'}): ${res.error || 'unknown error'}`;
+      }
+    } else {
+      base = 'Apply result incomplete — write state is unknown';
+    }
+  } catch (e: unknown) {
+    const err = e as { payload?: unknown; message?: string };
+    if (err && err.payload && typeof err.payload === 'object') {
+      const payload = err.payload as NrWritePayload;
+      if (payload.ok === false && payload.write_attempted === true) {
+        base = `Apply attempted (stage ${payload.stage || '?'}): ${payload.error || 'verification failed'}` +
+          (payload.rollback_attempted ? ` — rollback attempted, verified ${payload.rollback_verified === true ? 'yes' : 'NO'}` : '') +
+          (payload.backup_id ? ` (backup ${payload.backup_id})` : '');
+      } else if (payload.ok === false) {
+        base = `Apply failed (nothing written, stage ${payload.stage || '?'}): ${payload.error || 'unknown error'}`;
+      } else {
+        base = `Apply result unavailable — write state is unknown (${err.message || 'transport error'})`;
+      }
+    } else {
+      // no payload: transport/exec failure after dispatch — MUST NOT claim
+      // the write never started
+      base = `Apply result unavailable — write state is unknown (${err.message || 'transport error'})`;
+    }
+  }
+
+  const reReadOutcome = await reRead();
+  return composeNrModeResultMsg(base, {
+    ok: reReadOutcome.ok,
+    value: reReadOutcome.value,
+    byte: reReadOutcome.byte,
+  });
+}

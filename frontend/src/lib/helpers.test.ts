@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg } from './helpers';
+import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg, runNrModeApply } from './helpers';
 import { encodeBase64Url } from './bridge';
 
 describe('helpers', () => {
@@ -96,5 +96,47 @@ describe('composeNrModeResultMsg (NR failure-path regression)', () => {
     const out = composeNrModeResultMsg(applyMsg, { ok: true, value: 9, byte: '09' });
     expect(out).not.toContain('confirmed current');
     expect(out).toContain('unknown');
+  });
+});
+
+describe('runNrModeApply (production orchestrator, injected mocks)', () => {
+  it('transport error without payload must not claim "nothing written" and must survive a failing re-read', async () => {
+    const write = () => Promise.reject(new Error('exec bridge failed'));
+    const reRead = () => Promise.resolve({ ok: false, value: null, byte: '', error: 'nv.read failed' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('write state is unknown');
+    expect(msg).toContain('live re-read failed — current modem state is unknown');
+    expect(msg).toContain('exec bridge failed');
+  });
+
+  it('transport error + successful re-read: write unknown, observed byte reported', async () => {
+    const write = () => Promise.reject(new Error('stdout lost'));
+    const reRead = () => Promise.resolve({ ok: true, value: 2, byte: '02', error: '' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('write state is unknown');
+    expect(msg).toContain('confirmed current: SA Only (byte 0x02)');
+  });
+
+  it('write_attempted:false payload explicitly allows "nothing written"', async () => {
+    const write = () => Promise.resolve({ ok: false, error: 'Backup failed, write aborted: x', write_attempted: false, stage: 'backup' });
+    const reRead = () => Promise.resolve({ ok: true, value: 1, byte: '01', error: '' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).toContain('nothing written');
+    expect(msg).toContain('confirmed current: NSA Only (byte 0x01)');
+  });
+
+  it('write_attempted:true payload reports attempt + rollback, never "nothing written"', async () => {
+    const write = () => Promise.resolve({
+      ok: false, error: 'verification failed', write_attempted: true, stage: 'rollback',
+      backup_id: 'b1', rollback_attempted: true, rollback_verified: false,
+    });
+    const reRead = () => Promise.resolve({ ok: false, value: null, byte: '', error: '' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('rollback attempted, verified NO');
+    expect(msg).toContain('(backup b1)');
+    expect(msg).toContain('unknown');
   });
 });

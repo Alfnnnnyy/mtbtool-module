@@ -28,6 +28,15 @@ b64url() { python3 -c "import base64,sys; print(base64.urlsafe_b64encode(sys.std
 out=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
 check "nv read roundtrip" "echo '$out' | grep -q '0000008000000085'"
 
+# --- nv.write contract fields ---
+out=$("$BIN" nv write /nv/item_files/modem/mmode/lte_bandpref 0000008000000085 --slot 0 --reason contract_check)
+check "nv.write reports write_attempted" "echo '$out' | grep -q '\"write_attempted\":true'"
+check "nv.write reports stage verify" "echo '$out' | grep -q '\"stage\":\"verify\"'"
+check "nv.write reports backup_id" "echo '$out' | grep -q '\"backup_id\":\"[0-9]'"
+# validation failure must report write_attempted false
+out=$("$BIN" nv write /data/local/tmp/evil 00 --slot 0 || true)
+check "nv.write validation write_attempted false" "echo '$out' | grep -q '\"write_attempted\":false'"
+
 # --- bandlock set/get ---
 out=$("$BIN" bandlock set --lte "1,3,7,8,40" --nrNsa "78" --slot 0)
 check "bandlock set ok" "echo '$out' | grep -q '\"ok\":true'"

@@ -149,7 +149,7 @@
         isEmergency,
         verify: {
           ok: !!res?.ok,
-          integrity_ok: res?.integrity_ok !== false,
+          integrity_ok: res?.integrity_ok === true, // fail closed when missing
           all_match: res?.all_match === true,
           entries: res?.entries || [],
         },
