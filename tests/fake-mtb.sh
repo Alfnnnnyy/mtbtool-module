@@ -51,11 +51,26 @@ case "$1" in
     ;;
   5) # DIAG (read = arg8 "4" per DIAG_READ_ARGS: 5 0 0 0 1000 75 19 4 ...)
     if [ "$8" = "4" ]; then
+      if [ "${FAKE_MTB_DIAG_REAL:-0}" = "1" ]; then
+        # Real peridot 11-byte generic response (data_size=11) — unsupported
+        # for band-mask detection; parser must reject, not fall back.
+        echo "mtb: [mtb][xd:349] response from 89[Unknown], len = 11"
+        echo "mtb: [mtb][xd:410] callback, cmd_code = 0x15, data_size = 11"
+        echo "rsp data len(11)"
+        echo "rsp data: 0x15 0x4B 0x13 0x04 0x00 0x00 0x00 0x00 0x33 0x9D 0x7E"
+        exit 0
+      fi
       python3 - <<'PYEOF'
 data = bytearray(200)
 mask = 0
-for b in (1,3,7,8,40): mask |= 1 << (b-1)
+for b in (1, 3, 7, 8, 40): mask |= 1 << (b - 1)
 data[36:45] = mask.to_bytes(9, 'little')
+def set_nr(offset, bands):
+    m = 0
+    for b in bands: m |= 1 << (b - 1)
+    data[offset:offset + 10] = m.to_bytes(10, 'little')
+set_nr(108, [1, 2, 5])       # NR region 1 (SA)
+set_nr(172, [7, 8, 14])      # NR region 2 (NSA), >= 10 apart
 print("rsp data: " + " ".join(f"0x{b:02x}" for b in data))
 PYEOF
       exit 0

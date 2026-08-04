@@ -47,9 +47,13 @@
     loading = true;
     errorMsg = null;
     try {
-      const res = await rpc('features.check', { slot }) as { ok: boolean; features?: FeatureItem[] };
+      const res = await rpc('features.check', { slot }) as { ok: boolean; error?: string; features?: FeatureItem[]; failed_paths?: { path: string; error: string }[] };
       if (res && res.features) {
         features = res.features;
+      }
+      if (res && res.ok === false) {
+        const fails = (res.failed_paths || []).length;
+        errorMsg = `Feature check failed on ${fails} NV read(s) (modem/QMI error) — statuses are marked. ${res.error || ''}`;
       }
     } catch (e: unknown) {
       errorMsg = e instanceof Error ? e.message : String(e);

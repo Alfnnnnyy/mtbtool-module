@@ -131,12 +131,14 @@
     loading = true;
     statusMsg = null;
     try {
-      const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; bands?: { lte?: number[]; nrNsa?: number[]; nrSa?: number[] }; raw_byte_count?: number };
+      const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; error?: string; bands?: { lte?: number[]; nrNsa?: number[]; nrSa?: number[] }; raw_byte_count?: number };
       if (res && res.ok) {
         selectedLte = new Set(res.bands?.lte || []);
         selectedNrNsa = new Set(res.bands?.nrNsa || []);
         selectedNrSa = new Set(res.bands?.nrSa || []);
         statusMsg = `DIAG Auto-detection complete (${res.raw_byte_count || 0} bytes scanned).`;
+      } else {
+        statusMsg = `Band detection unsupported: ${(res && res.error) || 'DIAG response could not be interpreted'} — configure bands manually.`;
       }
     } catch (e: unknown) {
       statusMsg = `Detection error: ${e instanceof Error ? e.message : String(e)}`;

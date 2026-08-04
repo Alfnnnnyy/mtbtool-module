@@ -139,11 +139,12 @@ pub struct BandOffsets {
     pub nr_nsa: usize,
 }
 
-pub fn detect_band_offsets(diag_bytes: &[u8], min_bands: usize) -> BandOffsets {
+pub fn detect_band_offsets(diag_bytes: &[u8], min_bands: usize) -> Result<BandOffsets, String> {
     let nr_bands_sub80: Vec<i32> = ALL_NR_BANDS.iter().copied().filter(|&b| b <= 80).collect();
 
     let scan_candidates = |length: usize, known_bands: &[i32]| -> Vec<(usize, usize)> {
         let mut results = Vec::new();
+        // Candidates are bounded: offset + length must fit inside the payload.
         if diag_bytes.len() < length {
             return results;
         }
@@ -172,7 +173,13 @@ pub fn detect_band_offsets(diag_bytes: &[u8], min_bands: usize) -> BandOffsets {
     };
 
     let lte_candidates = scan_candidates(9, ALL_LTE_BANDS);
-    let lte_offset = lte_candidates.first().map(|&(_, off)| off).unwrap_or(36);
+    let lte_offset = match lte_candidates.first() {
+        Some(&(_, off)) => off,
+        // NEVER fall back to hardcoded offsets: an undetected mask on a
+        // real device payload (e.g. 11-byte DIAG response on peridot) is a
+        // difference from the assumed request format, not "empty bands".
+        None => return Err("no LTE band mask found in DIAG response".to_string()),
+    };
 
     let nr_candidates = scan_candidates(10, &nr_bands_sub80);
     let mut nr_offsets = Vec::new();
@@ -184,18 +191,33 @@ pub fn detect_band_offsets(diag_bytes: &[u8], min_bands: usize) -> BandOffsets {
             break;
         }
     }
-    nr_offsets.sort();
-    let nr_sa_offset = nr_offsets.get(0).copied().unwrap_or(108);
-    let nr_nsa_offset = nr_offsets
-        .get(1)
-        .copied()
-        .unwrap_or_else(|| nr_offsets.get(0).copied().unwrap_or(172));
-
-    BandOffsets {
-        lte: lte_offset,
-        nr_sa: nr_sa_offset,
-        nr_nsa: nr_nsa_offset,
+    if nr_offsets.len() < 2 {
+        return Err("NR SA/NSA masks not found (need 2 distinct regions)".to_string());
     }
+    nr_offsets.sort();
+
+    Ok(BandOffsets {
+        lte: lte_offset,
+        nr_sa: nr_offsets[0],
+        nr_nsa: nr_offsets[1],
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct DetectedBands {
+    pub lte: Vec<i32>,
+    pub nrNsa: Vec<i32>,
+    pub nrSa: Vec<i32>,
+}
+
+/// Interpret a DIAG payload as supported bands. Returns an error for
+/// unsupported/truncated payloads — never guesses with default offsets.
+pub fn interpret_diag_response(bytes: &[u8]) -> Result<DetectedBands, String> {
+    let offsets = detect_band_offsets(bytes, 3)?;
+    let lte = parse_bitmask_bands(bytes, offsets.lte, 9, ALL_LTE_BANDS);
+    let nr_nsa = parse_bitmask_bands(bytes, offsets.nr_nsa, 16, ALL_NR_BANDS);
+    let nr_sa = parse_bitmask_bands(bytes, offsets.nr_sa, 16, ALL_NR_BANDS);
+    Ok(DetectedBands { lte, nrNsa: nr_nsa, nrSa: nr_sa })
 }
 
 pub fn parse_bitmask_bands(
@@ -507,26 +529,36 @@ pub fn detect_bandlock(slot: i32) -> Value {
     if exit != 0 {
         return json!({ "ok": false, "error": "DIAG request failed" });
     }
+    // Semantic failure markers must be caught even with exit 0.
+    if raw.lines().any(|l| crate::util::has_diag_failure_marker(l)) {
+        return json!({ "ok": false, "error": "DIAG reported a semantic failure" });
+    }
 
     let bytes = parse_diag_response(&raw);
     if bytes.is_empty() {
         return json!({ "ok": false, "error": "Empty DIAG response" });
     }
 
-    let offsets = detect_band_offsets(&bytes, 3);
-    let lte_bands = parse_bitmask_bands(&bytes, offsets.lte, 9, ALL_LTE_BANDS);
-    let nr_nsa_bands = parse_bitmask_bands(&bytes, offsets.nr_nsa, 16, ALL_NR_BANDS);
-    let nr_sa_bands = parse_bitmask_bands(&bytes, offsets.nr_sa, 16, ALL_NR_BANDS);
-
-    json!({
-        "ok": true,
-        "bands": {
-            "lte": lte_bands,
-            "nrNsa": nr_nsa_bands,
-            "nrSa": nr_sa_bands
-        },
-        "offsets": offsets,
-        "raw_byte_count": bytes.len()
-    })
+    match interpret_diag_response(&bytes) {
+        Ok(bands) => {
+            let offsets = detect_band_offsets(&bytes, 3).expect("interpret succeeded");
+            json!({
+                "ok": true,
+                "bands": {
+                    "lte": bands.lte,
+                    "nrNsa": bands.nrNsa,
+                    "nrSa": bands.nrSa
+                },
+                "offsets": offsets,
+                "raw_byte_count": bytes.len()
+            })
+        }
+        Err(e) => json!({
+            "ok": false,
+            "error": format!("unsupported/truncated DIAG response: {}", e),
+            "raw_byte_count": bytes.len(),
+            "response_hex": bytes_to_hex(&bytes)
+        }),
+    }
 }
 

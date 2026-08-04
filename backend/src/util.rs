@@ -141,6 +141,15 @@ pub enum EfsRead {
 /// the process exits 0 (verified on POCO F6 / peridot, Android 14):
 /// `rsp.result = -117` QMI failures print "qmi response fail" / "... fail,
 /// REQUEST_ID_EFS" / "Error happen! error_code(-117)" with exit code 0.
+/// Exposed for DIAG responses too (semantic failures can come with exit 0).
+pub fn has_diag_failure_marker(line: &str) -> bool {
+    line.contains("rsp.result = -")
+        || line.contains("qmi response fail")
+        || line.contains("send_sync fail")
+        || line.contains("Error happen!")
+        || line.contains("error_code(")
+}
+
 const FAILURE_MARKERS: &[&str] = &[
     "rsp.result = -",
     "qmi response fail",
@@ -165,7 +174,7 @@ pub fn parse_efs_read_output(exit_code: i32, raw: &str) -> EfsRead {
     if exit_code != 0 {
         return EfsRead::Error(format!("exit {}", exit_code));
     }
-    if raw.lines().any(|l| FAILURE_MARKERS.iter().any(|m| l.contains(m))) {
+    if raw.lines().any(has_diag_failure_marker) {
         return EfsRead::Error("qmi read failure reported by mtb".to_string());
     }
 

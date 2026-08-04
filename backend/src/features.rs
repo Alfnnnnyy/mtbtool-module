@@ -282,27 +282,56 @@ pub const ALL_FEATURES: &[FeatureDef] = &[
     },
 ];
 
+/// Classify a feature from the EfsRead state of every required path.
+/// Any Error => "error". A true Absent (no data) => "absent" (modem default,
+/// never cleared). is_disabled is only evaluated when EVERY read is Present.
+pub fn classify_feature_status(
+    states: &[EfsRead],
+    is_disabled: &dyn Fn(&[&[u8]]) -> bool,
+) -> &'static str {
+    if states.iter().any(|s| matches!(s, EfsRead::Error(_))) {
+        return "error";
+    }
+    if !states.iter().all(|s| matches!(s, EfsRead::Present(_))) {
+        return "absent";
+    }
+    let existing: Vec<&[u8]> = states
+        .iter()
+        .filter_map(|s| match s {
+            EfsRead::Present(b) => Some(b.as_slice()),
+            _ => None,
+        })
+        .collect();
+    if is_disabled(&existing) {
+        "disabled"
+    } else {
+        "enabled"
+    }
+}
+
 pub fn check_features(slot: i32) -> Value {
     if let Err(e) = validate_slot(slot) {
         return json!({ "ok": false, "error": e });
     }
 
     let mut list = Vec::new();
+    let mut failed_paths: Vec<Value> = Vec::new();
+    let mut any_error = false;
 
     for feat in ALL_FEATURES {
         let mut path_objs = Vec::new();
-        let mut byte_arrays: Vec<Option<Vec<u8>>> = Vec::new();
+        let mut states: Vec<EfsRead> = Vec::new();
 
-        for &path in feat.reads {
+        for path in feat.reads.iter() {
             let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-            match parse_efs_read_output(exit, &raw) {
+            let st = parse_efs_read_output(exit, &raw);
+            match &st {
                 EfsRead::Present(bytes) => {
                     path_objs.push(json!({
                         "path": path,
                         "absent": false,
-                        "bytes": bytes_to_hex(&bytes)
+                        "bytes": bytes_to_hex(bytes)
                     }));
-                    byte_arrays.push(Some(bytes));
                 }
                 EfsRead::Absent => {
                     path_objs.push(json!({
@@ -310,33 +339,22 @@ pub fn check_features(slot: i32) -> Value {
                         "absent": true,
                         "bytes": ""
                     }));
-                    byte_arrays.push(None);
                 }
                 EfsRead::Error(e) => {
+                    any_error = true;
+                    failed_paths.push(json!({ "path": path, "error": e }));
                     path_objs.push(json!({
                         "path": path,
-                        "absent": false,
+                        "absent": Value::Null,
                         "bytes": "",
                         "error": e
                     }));
-                    byte_arrays.push(None);
                 }
             }
+            states.push(st);
         }
 
-        let status = if byte_arrays.iter().any(|b| b.is_none()) {
-            "absent"
-        } else {
-            let existing: Vec<&[u8]> = byte_arrays
-                .iter()
-                .filter_map(|b| b.as_deref())
-                .collect();
-            if (feat.is_disabled_fn)(&existing) {
-                "disabled"
-            } else {
-                "enabled"
-            }
-        };
+        let status = classify_feature_status(&states, &feat.is_disabled_fn);
 
         list.push(json!({
             "id": feat.id,
@@ -347,8 +365,9 @@ pub fn check_features(slot: i32) -> Value {
     }
 
     json!({
-        "ok": true,
-        "features": list
+        "ok": !any_error,
+        "features": list,
+        "failed_paths": failed_paths
     })
 }
 

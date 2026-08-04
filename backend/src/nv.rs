@@ -31,7 +31,9 @@ pub fn read_nv(path: &str, slot: i32) -> Value {
         }),
         EfsRead::Error(e) => json!({
             "ok": false,
-            "absent": true,
+            "exit": exit,
+            "absent": Value::Null,
+            "bytes": "",
             "error": e
         }),
     }

@@ -1,0 +1,82 @@
+libc: Access denied finding property "ro.debuggable"
+mtb: merge, old xiaomi_hal_set_logcat_print_mask 0xffff, merge_mask 0xffff
+mtb: new xiaomi_hal_set_logcat_print_mask 0xffff
+mtb: logcat print is started, g_xiaomi_logcat_print_mask 0xffff
+mtb: xiaomi_get_current_pid_name, proc_pid_buf = /vendor/bin/mtb
+mtb: xiaomi_get_current_pid_name, str_pid_name: /mtb
+mtb: xiaomi_get_current_pid_name, g_pid_info.p_name = mtb
+mtb: [mtb][xiaomi_mtb_test_cmn.cpp:178] xiaomi_cmn_diag_cmd_send: function entry ------------->
+mtb: merge, old g_xiaomi_shell_print_mask 0xffff, merge_mask 0xffff
+mtb: new g_xiaomi_shell_print_mask 0xffff
+mtb: shell print is started, g_xiaomi_shell_print_mask 0xffff
+mtb: [mtb][xiaomi_mtb_test_cmn.cpp:208] xiaomi_cmn_diag_cmd_send: callback mode with result
+mtb: [mtb][xiaomi_diag_send.c:888] xiaomi_diag_cmd_send_with_result_by_callback_mode: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:229] xiaomi_diag_comand_input_check: diag_comand, data_len = 7
+mtb: [mtb][xiaomi_diag_send.c:106] xiaomi_print_data_with_hex: data hex show, len(7), data: 4B 13 04 00 00 00 00
+mtb: [mtb][xiaomi_diag_send.c:273] xiaomi_diag_comand_output_check: reply_len = 10240
+mtb: [mtb][xiaomi_diag_send.c:294] xiaomi_diag_init_with_result: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:318] xiaomi_diag_init_with_result: function exit <-------------
+mtb: [mtb][xiaomi_diag_send.c:206] xiaomi_diag_register_callback: register call back, g_diag_channel = [0]MSM, data_primary = 0, remote_mask = [0]
+mtb: [mtb][xiaomi_diag_send.c:918] xiaomi_diag_cmd_send_with_result_by_callback_mode: ret_send = 0, will wait callback
+mtb: [mtb][xiaomi_diag_send.c:933] xiaomi_diag_cmd_send_with_result_by_callback_mode: Command time = 10 * 100ms
+mtb: [mtb][xiaomi_diag_send.c:592] xiaomi_diag_cmd_send_with_result_wait_create_thread: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:601] xiaomi_diag_cmd_send_with_result_wait_create_thread: xiaomi daig is created, conf = 0
+mtb: [mtb][xiaomi_diag_send.c:605] xiaomi_diag_cmd_send_with_result_wait_create_thread: function exit <-------------
+mtb: [mtb][xiaomi_diag_send.c:549] xiaomi_diag_cmd_send_with_result_wait_thread_proc: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:380] xiaomi_diag_cmd_response_by_callback: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:349] xiaomi_diag_cmd_response_check: ================ response from 89[Unknown], len = 11 ========================
+mtb: [mtb][xiaomi_diag_send.c:106] xiaomi_print_data_with_hex: data hex show, len(11), data: 15 4B 13 04 00 00 00 00 33 9D 7E
+mtb: [mtb][xiaomi_diag_send.c:410] xiaomi_diag_cmd_response_by_callback: callback, cmd_code = 0x15, data_size = 11
+mtb: [mtb][xiaomi_diag_send.c:940] xiaomi_diag_cmd_send_with_result_by_callback_mode: req end, data_size = 11, g_qcril_diag_rsp_buf.length = 11, reply_len = 10240
+mtb: [mtb][xiaomi_diag_send.c:416] xiaomi_diag_cmd_response_by_callback: function exit <-------------
+mtb: [mtb][xiaomi_diag_send.c:323] xiaomi_diag_deinit_with_result: function entry ------------->
+mtb: [mtb][xiaomi_diag_send.c:330] xiaomi_diag_deinit_with_result: function exit <-------------
+mtb: [mtb][xiaomi_diag_send.c:969] xiaomi_diag_cmd_send_with_result_by_callback_mode: function exit <-------------
+mtb: [mtb][xiaomi_mtb_test_cmn.cpp:253] xiaomi_cmn_diag_cmd_send: function exit <-------------
+RIL[xiaomi_mtb_test_cmn.cpp:178] xiaomi_cmn_diag_cmd_send: function entry ------------->
+diag cmd:
+0x4B 0x13 0x04 0x00 0x00 0x00 0x00 
+RIL[xiaomi_mtb_test_cmn.cpp:208] xiaomi_cmn_diag_cmd_send: callback mode with result
+RIL[xiaomi_diag_send.c:888] xiaomi_diag_cmd_send_with_result_by_callback_mode: function entry ------------->
+RIL[xiaomi_diag_send.c:229] xiaomi_diag_comand_input_check: diag_comand, data_len = 7
+RIL[xiaomi_diag_send.c:106] xiaomi_print_data_with_hex: data hex show, len(7), data: 4B 13 04 00 00 00 00
+RIL[xiaomi_diag_send.c:273] xiaomi_diag_comand_output_check: reply_len = 10240
+RIL[xiaomi_diag_send.c:294] xiaomi_diag_init_with_result: function entry ------------->
+diag: Diag_LSM_Init: invoked for pid: 26847 with init_count: 0
+diag:successfully connected to socket 4
+diag: Diag_LSM_Init: done for pid: 26847 with init_count: 1
+RIL[xiaomi_diag_send.c:318] xiaomi_diag_init_with_result: function exit <-------------
+RIL[xiaomi_diag_send.c:206] xiaomi_diag_register_callback: register call back, g_diag_channel = [0]MSM, data_primary = 0, remote_mask = [0]
+diag: diag_switch_logging: kernel supported: NUM_PERIPHERALS = 17, DIAG_CON_ALL: 131071
+diag: wrote switch log pkt ret:32
+ logging switched 
+RIL[xiaomi_diag_send.c:918] xiaomi_diag_cmd_send_with_result_by_callback_mode: ret_send = 0, will wait callback
+RIL[xiaomi_diag_send.c:933] xiaomi_diag_cmd_send_with_result_by_callback_mode: Command time = 10 * 100ms
+RIL[xiaomi_diag_send.c:592] xiaomi_diag_cmd_send_with_result_wait_create_thread: function entry ------------->
+RIL[xiaomi_diag_send.c:601] xiaomi_diag_cmd_send_with_result_wait_create_thread: xiaomi daig is created, conf = 0
+RIL[xiaomi_diag_send.c:605] xiaomi_diag_cmd_send_with_result_wait_create_thread: function exit <-------------
+RIL[xiaomi_diag_send.c:549] xiaomi_diag_cmd_send_with_result_wait_thread_proc: function entry ------------->
+RIL[xiaomi_diag_send.c:380] xiaomi_diag_cmd_response_by_callback: function entry ------------->
+RIL[xiaomi_diag_send.c:349] xiaomi_diag_cmd_response_check: ================ response from 89[Unknown], len = 11 ========================
+RIL[xiaomi_diag_send.c:106] xiaomi_print_data_with_hex: data hex show, len(11), data: 15 4B 13 04 00 00 00 00 33 9D 7E
+RIL[xiaomi_diag_send.c:410] xiaomi_diag_cmd_response_by_callback: callback, cmd_code = 0x15, data_size = 11
+RIL[xiaomi_diag_send.c:940] xiaomi_diag_cmd_send_with_result_by_callback_mode: req end, data_size = 11, g_qcril_diag_rsp_buf.length = 11, reply_len = 10240
+RIL[xiaomi_diag_send.c:416] xiaomi_diag_cmd_response_by_callback: function exit <-------------
+diag: diag_switch_logging: kernel supported: NUM_PERIPHERALS = 17, DIAG_CON_ALL: 131071
+diag: wrote switch log pkt ret:32
+ logging switched 
+RIL[xiaomi_diag_send.c:323] xiaomi_diag_deinit_with_result: function entry ------------->
+diag: Diag_LSM_DeInit: invoked for pid: 26847
+diag: Diag_LSM_DeInit: Initiating deinit pkt transfer
+diag: Diag_LSM_DeInit: sending signal to unblock read thread
+diag: CreateWaitThread, Read DEINIT_TYPE packet
+diag: diag_restart_thread: restart_thread_exit: 3, ....Exiting
+diag: Diag_LSM_DeInit: Closed diag fd for pid: 26847
+diag: CreateWaitThread, Exiting...
+diag: Diag_LSM_DeInit: Waiting for read thread, deinit_rcvd: 1, sig_rcvd: 1, read_thread_exit: 7
+diag: Diag_LSM_DeInit: done for pid: 26847
+RIL[xiaomi_diag_send.c:330] xiaomi_diag_deinit_with_result: function exit <-------------
+RIL[xiaomi_diag_send.c:969] xiaomi_diag_cmd_send_with_result_by_callback_mode: function exit <-------------
+rsp data len(11)
+rsp data: 0x15 0x4B 0x13 0x04 0x00 0x00 0x00 0x00 0x33 0x9D 0x7E
+RIL[xiaomi_mtb_test_cmn.cpp:253] xiaomi_cmn_diag_cmd_send: function exit <-------------

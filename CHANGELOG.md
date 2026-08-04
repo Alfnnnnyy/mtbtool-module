@@ -6,6 +6,29 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-08-04
+
+### Fixed — read-only device results (POCO F6/peridot round 2)
+- **features.check no longer reports false success**: a required-path read
+  error is now `status:"error"`, top-level `ok:false` with a `failed_paths`
+  summary; `is_disabled` is only evaluated when EVERY required read is
+  Present; true Absent stays distinct (`status:"absent"`). Mixed
+  Present/Error regression tests added.
+- **bandlock.detect no longer guesses**: the real peridot DIAG request
+  returns an 11-byte generic response (`15 4B 13 04 00 00 00 00 33 9D 7E`,
+  `data_size=11`). The old code fell back to hardcoded offsets 36/108/172
+  and reported ok:true with empty bands. Now: fallback offsets are REMOVED —
+  candidates must be detected within the payload bounds, an 11-byte payload
+  returns `ok:false` with `raw_byte_count` + `response_hex` diagnostics, and
+  DIAG semantic failure markers are rejected even with exit 0. Band
+  detection is treated as UNSUPPORTED on peridot until a valid request
+  format is identified (no guessing). `raw-10-diag.txt` vendored as fixture.
+- **nv.read contract**: a failed read returns `absent:null` + `ok:false`
+  (a read error never proves absence).
+- Frontend: features screen surfaces the failed-read summary; band detection
+  shows "unsupported — configure manually" instead of silence.
+- Writes/restores remain GATED (no controlled write yet).
+
 ## [1.0.7] - 2026-08-04
 
 ### Fixed — real-device parser (POCO F6 / peridot, Android 14)

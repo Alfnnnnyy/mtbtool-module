@@ -28,7 +28,10 @@ does not ship it, the module refuses to install (customize.sh check).
 - **Dashboard** — compatibility probe (`/vendor/bin/mtb` presence, model, Android), quick actions, danger notice.
 - **Band lock** — detect hardware-supported bands via modem DIAG, or configure
   bands manually; build the LTE / NR NSA / NR SA masks, preview old → new bytes,
-  apply with two-step confirmation, restart modem.
+  apply with two-step confirmation, restart modem. NOTE: on peridot (POCO F6)
+  the DIAG request format returns an 11-byte response that cannot be decoded —
+  band detection reports "unsupported" and manual configuration is used
+  instead (no fallback guessing).
 - **Modem features** — disable/restore 12 known NR features (UL Tx switching,
   UL MIMO, NR CA, DSS, segmentation, …) with original-value restore, plus the
   5G mode selector (SA/NSA / NSA only / SA only).

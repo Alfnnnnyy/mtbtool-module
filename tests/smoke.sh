@@ -106,6 +106,22 @@ check "import apply failure rollback attempted" "echo '$out_import_fail' | grep 
 read_imp_restored=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
 check "import apply first command restored" "echo '$read_imp_restored' | grep -q '11223344'"
 
+# --- features.check must distinguish Error from Absent ---
+out=$(FAKE_MTB_QMI_FAIL=1 "$BIN" features check --slot 0 || true)
+check "features check qmi -> ok:false" "echo '$out' | grep -q '\"ok\":false'"
+check "features check qmi -> failed_paths" "echo '$out' | grep -q 'failed_paths'"
+check "features check qmi -> status error" "echo '$out' | grep -q '\"status\":\"error\"'"
+
+# --- bandlock.detect must reject the real 11-byte peridot DIAG payload ---
+out=$(FAKE_MTB_DIAG_REAL=1 "$BIN" bandlock detect || true)
+check "detect 11-byte real payload -> ok:false" "echo '$out' | grep -q '\"ok\":false'"
+check "detect error mentions unsupported" "echo '$out' | grep -q 'unsupported/truncated'"
+check "detect reports raw_byte_count 11" "echo '$out' | grep -q 'raw_byte_count\":11'"
+
+# --- nv.read: failed read must not claim absent ---
+out=$(FAKE_MTB_QMI_FAIL=1 "$BIN" nv read /nv/item_files/modem/mmode/nr_band_pref --slot 0 || true)
+check "nv.read qmi -> absent null not true" "echo '$out' | grep -q '\"absent\":null'"
+
 # --- real-format: QMI failure with exit 0 must be Error, not Absent ---
 out=$(FAKE_MTB_QMI_FAIL=1 "$BIN" nv read /nv/item_files/modem/mmode/nr_nsa_band_pref --slot 0 || true)
 check "qmi fail exit0 -> error not absent" "echo '$out' | grep -q 'qmi read failure'"

@@ -88,7 +88,7 @@ fn test_diag_offset_detection() {
         diag_bytes[172 + (bit / 8) as usize] |= 1 << (bit % 8);
     }
 
-    let offsets_default = detect_band_offsets(&diag_bytes, 5);
+    let offsets_default = detect_band_offsets(&diag_bytes, 5).expect("offsets detected");
     assert_eq!(
         offsets_default,
         BandOffsets {
@@ -117,7 +117,7 @@ fn test_diag_offset_detection() {
         diag_shifted[80 + (bit / 8) as usize] |= 1 << (bit % 8);
     }
 
-    let offsets_shifted = detect_band_offsets(&diag_shifted, 5);
+    let offsets_shifted = detect_band_offsets(&diag_shifted, 5).expect("offsets detected");
     assert_eq!(
         offsets_shifted,
         BandOffsets {
@@ -676,4 +676,73 @@ fn test_real_device_fixtures() {
         }
         other => panic!("nr SA expected Present, got {:?}", other),
     }
+}
+
+#[test]
+fn test_feature_status_classifier_mixed() {
+    use mtbctl::features::classify_feature_status;
+    use mtbctl::util::{parse_efs_read_output}; // for EfsRead type path
+    let always_true = |_: &[&[u8]]| true;
+    let always_false = |_: &[&[u8]]| false;
+
+    // Present + Error must be "error" (never evaluated by is_disabled)
+    let mixed = vec![EfsRead::Present(vec![1]), EfsRead::Error("qmi fail".into())];
+    assert_eq!(classify_feature_status(&mixed, &always_false), "error");
+
+    // Present + Absent -> "absent"
+    let absent = vec![EfsRead::Present(vec![1]), EfsRead::Absent];
+    assert_eq!(classify_feature_status(&absent, &always_false), "absent");
+
+    // all Present
+    let all_p = vec![EfsRead::Present(vec![1]), EfsRead::Present(vec![0])];
+    assert_eq!(classify_feature_status(&all_p, &always_false), "enabled");
+    assert_eq!(classify_feature_status(&all_p, &always_true), "disabled");
+
+    // all Absent -> "absent"
+    let none = vec![EfsRead::Absent, EfsRead::Absent];
+    assert_eq!(classify_feature_status(&none, &always_false), "absent");
+}
+
+#[test]
+fn test_diag_interpret_rejects_11byte_peridot() {
+    use mtbctl::bandlock::interpret_diag_response;
+    // Real peridot DIAG payload (data_size=11): unsupported request format.
+    let payload = [0x15u8, 0x4B, 0x13, 0x04, 0x00, 0x00, 0x00, 0x00, 0x33, 0x9D, 0x7E];
+    assert!(interpret_diag_response(&payload).is_err(),
+        "11-byte payload must be unsupported, not guessed with default offsets");
+}
+
+#[test]
+fn test_diag_interpret_bounds_and_valid() {
+    use mtbctl::bandlock::interpret_diag_response;
+    // LTE mask at offset 0 (9 bytes, bands 1,3), NR regions at 20 and 40.
+    let mut buf = vec![0u8; 64];
+    let set_bands = |buf: &mut Vec<u8>, offset: usize, bands: &[i32]| {
+        for &b in bands {
+            let bit = (b - 1) as usize;
+            buf[offset + bit / 8] |= 1 << (bit % 8);
+        }
+    };
+    set_bands(&mut buf, 0, &[1, 3, 7]);    // LTE (>=3 bands for min threshold)
+    set_bands(&mut buf, 20, &[1, 2, 5]);   // NR region 1 (SA)
+    set_bands(&mut buf, 40, &[7, 8, 14]);      // NR region 2 (NSA), >=10 apart
+    let got = interpret_diag_response(&buf).expect("valid payload interprets");
+    assert_eq!(got.lte, vec![1, 3, 7]);
+    assert!(!got.nrSa.is_empty() && !got.nrNsa.is_empty());
+
+    // offset + length beyond payload must be rejected (bounds)
+    let short = vec![0u8; 9]; // only room for the LTE block
+    assert!(interpret_diag_response(&short).is_err());
+}
+
+/// Real DIAG capture from peridot must be rejected as unsupported (it is an
+/// 11-byte generic response, not a band-mask payload).
+#[test]
+fn test_diag_real_device_fixture() {
+    use mtbctl::bandlock::interpret_diag_response;
+    use mtbctl::util::parse_diag_response;
+    let raw = include_str!("../../tests/fixtures/raw-10-diag.txt");
+    let bytes = parse_diag_response(raw);
+    assert_eq!(bytes.len(), 11);
+    assert!(interpret_diag_response(&bytes).is_err());
 }
