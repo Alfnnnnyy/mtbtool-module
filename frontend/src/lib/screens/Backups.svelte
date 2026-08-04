@@ -136,8 +136,14 @@
       // A valid backup that differs from the modem (all_match:false) is the
       // REASON restore exists — the review dialog must open. It stays
       // disabled only for integrity problems or live pre-read failures.
-      // The concrete resolved id is REQUIRED and frozen here.
-      const resolvedId = res?.id || id;
+      // The concrete resolved id is REQUIRED and frozen here. "latest" is
+      // never acceptable as a frozen id — the backend resolved it already.
+      const concreteId = res?.id;
+      if (!concreteId || concreteId.trim() === '' || concreteId === 'latest') {
+        statusMsg = 'Cannot resolve a concrete backup id for restore review (verify response missing id).';
+        return;
+      }
+      const resolvedId = concreteId;
       restoreReview = {
         resolvedId,
         isEmergency,

@@ -99,7 +99,7 @@
     }
   }
 
-  async function readNrMode(preserveMsg = false) {
+  async function readNrMode(preserveMsg = false): Promise<{ ok: boolean; value: number | null; byte: string; error: string }> {
     nrModeLoading = true;
     if (!preserveMsg) nrModeMsg = null;
     try {
@@ -109,10 +109,17 @@
         if (!isNaN(val)) {
           nrMode = val;
           nrPending = null;
+          return { ok: true, value: val, byte: res.bytes, error: '' };
         }
       }
+      const err = 'mode read returned no usable byte';
+      if (!preserveMsg) nrModeMsg = `Read error: ${err}`;
+      return { ok: false, value: null, byte: '', error: err };
     } catch (e: unknown) {
-      nrModeMsg = `Read error: ${e instanceof Error ? e.message : String(e)}`;
+      const err = e instanceof Error ? e.message : String(e);
+      // preserve-message reads must NOT erase the apply/rollback result
+      if (!preserveMsg) nrModeMsg = `Read error: ${err}`;
+      return { ok: false, value: null, byte: '', error: err };
     } finally {
       nrModeLoading = false;
     }
@@ -163,10 +170,12 @@
       // never assume the modem state: re-read live and reconcile nrMode,
       // but WITHOUT erasing the apply result message.
       nrModeLoading = false;
-      await readNrMode(true);
-      const confirmed = nrMode >= 0 && nrMode <= 2
-        ? `confirmed current: ${NR_LABELS[nrMode]} (byte 0x${nrMode.toString(16).padStart(2, '0')})`
-        : 'confirming current mode failed — see read error above';
+      const reRead = await readNrMode(true);
+      // "confirmed current" ONLY from a successful live re-read — the
+      // previous cached nrMode is never treated as confirmation.
+      const confirmed = reRead.ok && reRead.value !== null && reRead.value >= 0 && reRead.value <= 2
+        ? `confirmed current: ${NR_LABELS[reRead.value]} (byte 0x${reRead.byte})`
+        : 'live re-read failed — current modem state is unknown';
       nrModeMsg = nrModeMsg ? `${nrModeMsg} — ${confirmed}` : `Mode re-read: ${confirmed}`;
     }
   }

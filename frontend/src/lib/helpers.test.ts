@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem } from './helpers';
+import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg } from './helpers';
 import { encodeBase64Url } from './bridge';
 
 describe('helpers', () => {
@@ -66,5 +66,35 @@ describe('encodeBase64Url', () => {
     // Verify decoded json matches original
     const decodedJson = Buffer.from(b64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
     expect(JSON.parse(decodedJson)).toEqual(payload);
+  });
+});
+
+describe('composeNrModeResultMsg (NR failure-path regression)', () => {
+  const applyMsg = 'Apply attempted: verification failed — rollback attempted yes, verified yes (backup 123_1_x)';
+
+  it('preserves the apply/rollback message and appends confirmed state on a good re-read', () => {
+    const out = composeNrModeResultMsg(applyMsg, { ok: true, value: 2, byte: '02' });
+    expect(out).toContain(applyMsg);
+    expect(out).toContain('confirmed current: SA Only (byte 0x02)');
+  });
+
+  it('keeps the apply message and reports unknown state when the re-read fails', () => {
+    const out = composeNrModeResultMsg(applyMsg, { ok: false, value: null, byte: '' });
+    expect(out).toContain(applyMsg);
+    expect(out).toContain('live re-read failed — current modem state is unknown');
+    expect(out).not.toContain('confirmed current');
+  });
+
+  it('never uses a stale cached value as confirmation', () => {
+    // value=1 would be a stale cache if the re-read actually failed
+    const out = composeNrModeResultMsg(applyMsg, { ok: false, value: 1, byte: '01' });
+    expect(out).not.toContain('confirmed current');
+    expect(out).toContain('unknown');
+  });
+
+  it('rejects out-of-range values even when ok', () => {
+    const out = composeNrModeResultMsg(applyMsg, { ok: true, value: 9, byte: '09' });
+    expect(out).not.toContain('confirmed current');
+    expect(out).toContain('unknown');
   });
 });

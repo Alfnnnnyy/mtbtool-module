@@ -6,6 +6,22 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.13] - 2026-08-04
+
+### Fixed (audit round: NR failure path + restore id hardening)
+- **NR apply failure path**: `readNrMode` returns a structured
+  `{ ok, value, byte, error }` and preserve-message reads no longer mutate
+  the apply/rollback message. "confirmed current" is appended ONLY from a
+  successful live re-read; on re-read failure the message says
+  "live re-read failed — current modem state is unknown" and the previous
+  cached mode is never treated as confirmation. Pure compose helper with 4
+  regression tests (message preserved, unknown state, stale value rejected,
+  out-of-range rejected).
+- **Restore resolved id hardened**: the review requires a non-empty concrete
+  manifest id from `backup.verify`; `"latest"` is rejected as a frozen id and
+  the `res?.id || id` fallback is gone — review does not open when the
+  backend fails to resolve.
+
 ## [1.0.12] - 2026-08-04
 
 ### Fixed (audit round: provenance + restore TOCTOU + NR message)

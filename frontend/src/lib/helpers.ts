@@ -42,3 +42,20 @@ export function toggleSetItem<T>(set: Set<T>, item: T, value?: boolean): Set<T> 
   }
   return next;
 }
+
+export const NR_MODE_LABELS = ['SA + NSA (Both)', 'NSA Only', 'SA Only'];
+
+/**
+ * Compose the final NR-mode apply message from the apply/rollback result and
+ * a LIVE re-read outcome. "confirmed current" is only ever produced from a
+ * successful re-read — a stale cached value is never treated as confirmation.
+ */
+export function composeNrModeResultMsg(
+  base: string,
+  reRead: { ok: boolean; value: number | null; byte: string },
+): string {
+  if (reRead.ok && reRead.value !== null && reRead.value >= 0 && reRead.value < NR_MODE_LABELS.length) {
+    return `${base} — confirmed current: ${NR_MODE_LABELS[reRead.value]} (byte 0x${reRead.byte})`;
+  }
+  return `${base} — live re-read failed — current modem state is unknown`;
+}
