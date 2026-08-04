@@ -72,10 +72,17 @@ export interface NrWritePayload {
   error?: string;
   verified?: boolean;
   write_attempted?: boolean;
+  /** exit code of the mtb write command; null when the write never started */
+  write_exit?: number | null;
   stage?: string;
   backup_id?: string | null;
+  /** observed read-back hex (or null when absent/unreadable) */
+  observed_after?: string | null;
+  verify_read_error?: string | null;
   rollback_attempted?: boolean;
   rollback_verified?: boolean;
+  /** deprecated alias kept for compatibility */
+  exit?: number | null;
 }
 
 /**
@@ -105,51 +112,63 @@ export function classifyWriteState(p: NrWritePayload | undefined):
   return { kind: 'unknown', reason: 'write_attempted missing or malformed' };
 }
 
+/**
+ * Describe a write outcome from the BACKEND RESPONSE SHAPE, classifying
+ * write_attempted FIRST. verified:false is only interpreted inside the
+ * "attempted" branch — a pre-write abort (validation/lock/read_before/
+ * backup) must never be described as a failed write.
+ */
+export function describeWriteOutcome(p: NrWritePayload | undefined): string {
+  const state = classifyWriteState(p);
+  if (state.kind === 'unknown') {
+    return `Apply result incomplete — write state is unknown (${state.reason})`;
+  }
+  if (state.kind === 'not_written') {
+    // "nothing written" requires ok:false; anything else is malformed
+    if (p!.ok === false) {
+      return `Apply failed (nothing written, stage ${p!.stage || '?'}): ${p!.error || 'unknown error'}`;
+    }
+    return 'Apply result incomplete — write state is unknown (ok:true with write_attempted:false is malformed)';
+  }
+  // write_attempted === true
+  if (p!.verified === true) {
+    if (p!.ok === true) {
+      return `NR mode applied and verified (backup ${p!.backup_id || '?'})`;
+    }
+    return 'Apply result incomplete — write state is unknown (verified:true with ok:false is malformed)';
+  }
+  if (p!.verified === false) {
+    if (p!.rollback_attempted === true) {
+      return `NR mode write attempted (stage ${p!.stage || 'rollback'}): ${p!.error || 'verification failed'}` +
+        ` — rollback attempted, verified ${p!.rollback_verified === true ? 'yes' : 'NO'}` +
+        (p!.backup_id ? ` (backup ${p!.backup_id})` : '') +
+        (p!.verify_read_error ? `; verify read error: ${p!.verify_read_error}` : `; observed after: ${p!.observed_after ?? 'absent'}`);
+    }
+    // write reached the modem but the read-back did not confirm the target
+    // (stage write/verify without rollback): state unchanged or verification
+    // failed — never "nothing written".
+    return `NR mode write attempted (stage ${p!.stage || '?'}): ${p!.error || 'write command failed'}` +
+      ` — read-back shows ${p!.observed_after ?? 'absent'}; state unchanged or verification failed, no rollback needed` +
+      (p!.verify_read_error ? `; verify read error: ${p!.verify_read_error}` : '');
+  }
+  return 'Apply result incomplete — write state is unknown (verified field missing)';
+}
+
 export async function runNrModeApply(
   write: () => Promise<unknown>,
   reRead: () => Promise<NrReReadResult>,
 ): Promise<string> {
   let base: string;
   try {
-    const res = (await write()) as NrWritePayload;
-    if (res && res.ok === true && res.verified === true) {
-      base = `NR mode applied and verified (backup ${res.backup_id || '?'})`;
-    } else if (res && res.verified === false) {
-      base = `NR mode written but read-back verification FAILED (backup ${res.backup_id || '?'})` +
-        (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '');
-    } else if (res && res.ok === false) {
-      const clsState = classifyWriteState(res);
-      if (clsState.kind === 'attempted') {
-        base = `Apply attempted (stage ${res.stage || '?'}): ${res.error || 'verification failed'}` +
-          (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '') +
-          (res.backup_id ? ` (backup ${res.backup_id})` : '');
-      } else if (clsState.kind === 'not_written') {
-        // backend explicitly says the write never reached the modem write stage
-        base = `Apply failed (nothing written, stage ${res.stage || '?'}): ${res.error || 'unknown error'}`;
-      } else {
-        base = `Apply result incomplete — write state is unknown (${res.error || clsState.reason})`;
-      }
-    } else {
-      base = 'Apply result incomplete — write state is unknown';
-    }
+    base = describeWriteOutcome((await write()) as NrWritePayload);
   } catch (e: unknown) {
     const err = e as { payload?: unknown; message?: string };
-    if (err && err.payload && typeof err.payload === 'object') {
-      const payload = err.payload as NrWritePayload;
-      const clsState = classifyWriteState(payload as NrWritePayload | undefined);
-      if (payload.ok === false && clsState.kind === 'attempted') {
-        base = `Apply attempted (stage ${payload.stage || '?'}): ${payload.error || 'verification failed'}` +
-          (payload.rollback_attempted ? ` — rollback attempted, verified ${payload.rollback_verified === true ? 'yes' : 'NO'}` : '') +
-          (payload.backup_id ? ` (backup ${payload.backup_id})` : '');
-      } else if (payload.ok === false && clsState.kind === 'not_written') {
-        base = `Apply failed (nothing written, stage ${payload.stage || '?'}): ${payload.error || 'unknown error'}`;
-      } else {
-        base = `Apply result unavailable — write state is unknown (${err.message || 'transport error'})`;
-      }
+    const payload = err && err.payload;
+    if (payload && typeof payload === 'object') {
+      base = describeWriteOutcome(payload as NrWritePayload);
     } else {
-      // no payload: transport/exec failure after dispatch — MUST NOT claim
-      // the write never started
-      base = `Apply result unavailable — write state is unknown (${err.message || 'transport error'})`;
+      // transport/exec failure after dispatch — never claim a verdict
+      base = `Apply result unavailable — write state is unknown (${err?.message || 'transport error'})`;
     }
   }
 

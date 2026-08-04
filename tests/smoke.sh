@@ -49,16 +49,23 @@ out=$(FAKE_MTB_WRITE_ERR_STORE_BAD=1 "$BIN" nv write "$P" aabb --slot 0 --reason
 check "write-err: bad store -> rollback attempted" "echo '$out' | grep -q '\"rollback_attempted\":true'"
 check "write-err: bad store -> rollback verified" "echo '$out' | grep -q '\"rollback_verified\":true'"
 check "write-err: bad store -> stage rollback" "echo '$out' | grep -q '\"stage\":\"rollback\"'"
+# independent read-back: exact pre-write bytes (aabb) must be restored
+out=$("$BIN" nv read "$P" --slot 0)
+check "write-err: independent read confirms rollback restored aabb" "echo '$out' | grep -q 'aabb'"
 # 3. write changes nothing then exits nonzero -> unchanged, no rollback
 out=$(FAKE_MTB_WRITE_ERR_NOCHANGE=1 "$BIN" nv write "$P" ccdd --slot 0 --reason err_nc || true)
 check "write-err: nochange -> ok false" "echo '$out' | grep -q '\"ok\":false'"
 check "write-err: nochange -> no rollback" "echo '$out' | grep -q '\"rollback_attempted\":false'"
 check "write-err: nochange -> stage write" "echo '$out' | grep -q '\"stage\":\"write\"'"
+check "write-err: write_exit contract present" "echo '$out' | grep -q '\"write_exit\":1'"
 # 4. write exits nonzero and follow-up read fails -> rollback attempted
 out=$(FAKE_MTB_WRITE_ERR_READFAIL=1 "$BIN" nv write "$P" aabb --slot 0 --reason err_rf || true)
 check "write-err: readfail -> rollback attempted" "echo '$out' | grep -q '\"rollback_attempted\":true'"
 check "write-err: readfail -> verify_read_error present" "echo '$out' | grep -q 'verify_read_error'"
 check "write-err: readfail -> write_attempted true" "echo '$out' | grep -q '\"write_attempted\":true'"
+# independent read-back after read-fail rollback: exact pre-write bytes
+out=$("$BIN" nv read "$P" --slot 0)
+check "write-err: independent read after readfail rollback -> aabb" "echo '$out' | grep -q 'aabb'"
 
 # --- bandlock set/get ---
 out=$("$BIN" bandlock set --lte "1,3,7,8,40" --nrNsa "78" --slot 0)

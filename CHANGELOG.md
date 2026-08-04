@@ -6,6 +6,25 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.16] - 2026-08-04
+
+### Fixed (audit round: branch-order + write_exit contract)
+- **Branch-order bug**: `runNrModeApply` classified `verified` BEFORE
+  `write_attempted`, so real backend pre-write aborts (validation/lock/
+  read_before/backup: ok:false + verified:false + write_attempted:false)
+  were described as "NR mode written but read-back verification FAILED".
+  Now `classifyWriteState` runs FIRST via `describeWriteOutcome`, then
+  verified is interpreted only inside the attempted branch; malformed
+  payloads fail closed to "write state is unknown". Regression tests A-D
+  use the EXACT backend response shapes (resolved + rejected).
+- **write_exit contract**: responses now carry `write_exit` (number|null —
+  null when the write never started), `observed_after` and
+  `verify_read_error` (null when N/A); `exit` kept as a deprecated alias.
+  Smoke asserts `write_exit:1` on failure paths.
+- **Smoke hardening**: after store-bad and read-fail rollbacks, an
+  INDEPENDENT `nv read` asserts the exact pre-write bytes (aabb) were
+  restored — not just `rollback_verified` from the same response.
+
 ## [1.0.15] - 2026-08-04
 
 ### Fixed (audit round: strict write-state classifier + nonzero-exit read-back truth)

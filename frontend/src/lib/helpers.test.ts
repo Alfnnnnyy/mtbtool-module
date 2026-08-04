@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg, runNrModeApply, classifyWriteState } from './helpers';
+import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg, runNrModeApply, classifyWriteState, describeWriteOutcome } from './helpers';
 import { encodeBase64Url } from './bridge';
 
 describe('helpers', () => {
@@ -129,8 +129,8 @@ describe('runNrModeApply (production orchestrator, injected mocks)', () => {
 
   it('write_attempted:true payload reports attempt + rollback, never "nothing written"', async () => {
     const write = () => Promise.resolve({
-      ok: false, error: 'verification failed', write_attempted: true, stage: 'rollback',
-      backup_id: 'b1', rollback_attempted: true, rollback_verified: false,
+      ok: false, error: 'verification failed', verified: false, write_attempted: true, stage: 'rollback',
+      backup_id: 'b1', rollback_attempted: true, rollback_verified: false, observed_after: '00',
     });
     const reRead = () => Promise.resolve({ ok: false, value: null, byte: '', error: '' });
     const msg = await runNrModeApply(write, reRead);
@@ -168,5 +168,56 @@ describe('three-way write-state classifier (missing write_attempted)', () => {
     expect(classifyWriteState({ ok: false, error: 'x' }).kind).toBe('unknown');
     expect(classifyWriteState({ ok: false, error: 'x', write_attempted: true }).kind).toBe('attempted');
     expect(classifyWriteState({ ok: false, error: 'x', write_attempted: false }).kind).toBe('not_written');
+  });
+});
+
+describe('branch-order regression: classify BEFORE verified (exact backend shapes)', () => {
+  const okRead = () => Promise.resolve({ ok: true, value: 1, byte: '01', error: '' });
+
+  it('A: {ok:false,verified:false,write_attempted:false,stage:validation} -> nothing written, never "NR mode written"', async () => {
+    const write = () => Promise.resolve({ ok: false, verified: false, write_attempted: false, stage: 'validation', error: 'bad path' });
+    const msg = await runNrModeApply(write, okRead);
+    expect(msg).toContain('nothing written');
+    expect(msg).not.toContain('NR mode written');
+    expect(msg).not.toContain('read-back verification FAILED');
+    expect(msg).toContain('confirmed current');
+  });
+
+  it('B: {ok:false,verified:false} missing write_attempted -> write state unknown', async () => {
+    const write = () => Promise.resolve({ ok: false, verified: false });
+    const msg = await runNrModeApply(write, okRead);
+    expect(msg).toContain('write state is unknown');
+    expect(msg).not.toContain('nothing written');
+    expect(msg).not.toContain('NR mode written');
+  });
+
+  it('C: {ok:false,verified:false,write_attempted:true,stage:write,rollback_attempted:false} -> attempted, never nothing written', async () => {
+    const write = () => Promise.resolve({ ok: false, verified: false, write_attempted: true, stage: 'write', rollback_attempted: false, observed_after: 'aabb' });
+    const msg = await runNrModeApply(write, okRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('write attempted');
+    expect(msg).toContain('read-back shows aabb');
+  });
+
+  it('D: rejected payload versions of A/B/C behave identically', async () => {
+    const rejectWith = (payload: unknown) => {
+      const err = new Error('transport');
+      (err as unknown as { payload?: unknown }).payload = payload;
+      return Promise.reject(err);
+    };
+    const a = await runNrModeApply(() => rejectWith({ ok: false, verified: false, write_attempted: false, stage: 'validation', error: 'x' }), okRead);
+    expect(a).toContain('nothing written');
+    expect(a).not.toContain('NR mode written');
+    const b = await runNrModeApply(() => rejectWith({ ok: false, verified: false }), okRead);
+    expect(b).toContain('write state is unknown');
+    expect(b).not.toContain('nothing written');
+    const c = await runNrModeApply(() => rejectWith({ ok: false, verified: false, write_attempted: true, stage: 'write', rollback_attempted: false }), okRead);
+    expect(c).not.toContain('nothing written');
+    expect(c).toContain('write attempted');
+  });
+
+  it('ok:true + verified:true with write_attempted:false is malformed -> unknown', () => {
+    const msg = describeWriteOutcome({ ok: true, verified: true, write_attempted: false });
+    expect(msg).toContain('write state is unknown');
   });
 });
