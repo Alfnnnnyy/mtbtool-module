@@ -6,6 +6,28 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.12] - 2026-08-04
+
+### Fixed (audit round: provenance + restore TOCTOU + NR message)
+- **Release provenance**: the release workflow now verifies the created tag
+  commit equals the build commit (`v<VC>^{commit}` == `$GITHUB_SHA`) before
+  publishing; the smoke determinism fix was missing from the v12 tag and this
+  release is built from a single commit containing source + tests + tag +
+  artifact.
+- **Restore "latest" TOCTOU**: `backup.verify` resolves the concrete backup
+  id; the review dialog freezes `resolvedId` and restore executes ONLY that
+  id — a newer backup created between review and confirm can no longer be
+  restored accidentally. The dialog shows the resolved concrete ID.
+  Regression test: snapshot A → create newer backup → restore must still
+  reach A.
+- **NR apply result message survives the live re-read**: `readNrMode`
+  supports `preserveMessage`; after apply the result (attempted/verified/
+  rollback/backup) is appended with the confirmed current mode + byte
+  instead of being erased.
+- **UX**: backup verify with intact integrity but differing bytes reads
+  "Integrity OK — differs from current modem (N differ, restore target)"
+  instead of a false "Verify FAILED".
+
 ## [1.0.11] - 2026-08-04
 
 ### Fixed — audit round: restore deadlock, peridot snapshot, stale delete, NR messaging

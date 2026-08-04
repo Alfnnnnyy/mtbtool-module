@@ -50,7 +50,9 @@
   let verifyResult = $state<string | null>(null);
 
   // Emergency Modal Confirm
-  let restoreReview = $state<{ id: string; isEmergency: boolean; verify: { ok: boolean; integrity_ok: boolean; all_match: boolean; entries: Array<{ path: string; integrity: boolean; matches_current: boolean; read_error?: string }> } } | null>(null);
+  // resolvedId is FROZEN from the verify response: "latest" is resolved
+  // exactly once; restore must never re-resolve it (TOCTOU).
+  let restoreReview = $state<{ resolvedId: string; isEmergency: boolean; verify: { ok: boolean; integrity_ok: boolean; all_match: boolean; entries: Array<{ path: string; integrity: boolean; matches_current: boolean; read_error?: string }> } } | null>(null);
   let restoreConfirmText = $state('');
   let restoringId = $state<string | null>(null);
 
@@ -101,15 +103,22 @@
     statusMsg = null;
     try {
       const res = await rpc('backup.verify', { id }) as {
-        ok: boolean;
-        id?: string;
-        entries?: Array<{ path: string; integrity: boolean; matches_current: boolean }>;
+        ok: boolean; integrity_ok?: boolean; all_match?: boolean;
+        entries?: Array<{ path: string; integrity: boolean; matches_current: boolean; read_error?: string }>;
       };
       const entries = res?.entries || [];
-      const allMatch = res?.ok === true && entries.every((e) => e.integrity && e.matches_current);
-      verifyResult = allMatch
-        ? `Verify OK: ${entries.length}/${entries.length} entries match current modem state.`
-        : `Verify FAILED: ${entries.filter((e) => !e.integrity || !e.matches_current).length}/${entries.length} entries mismatch.`;
+      const integrityOk = res?.integrity_ok === true;
+      const allMatch = res?.all_match === true;
+      const differ = entries.filter((e) => e.integrity && !e.matches_current).length;
+      if (res?.ok === false) {
+        verifyResult = `Verify incomplete: live modem read failed for ${entries.filter((e) => e.read_error).length} entr(ies).`;
+      } else if (!integrityOk) {
+        verifyResult = `Integrity FAILED on ${entries.filter((e) => !e.integrity).length} entr(ies) — restore is disabled.`;
+      } else if (allMatch) {
+        verifyResult = `Verify OK: ${entries.length}/${entries.length} entries match current modem state.`;
+      } else {
+        verifyResult = `Integrity OK — differs from current modem (${differ}/${entries.length} differ, restore target).`;
+      }
     } catch (e: unknown) {
       verifyResult = `Verify error: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
@@ -127,8 +136,11 @@
       // A valid backup that differs from the modem (all_match:false) is the
       // REASON restore exists — the review dialog must open. It stays
       // disabled only for integrity problems or live pre-read failures.
+      // The concrete resolved id is REQUIRED and frozen here.
+      const resolvedId = res?.id || id;
       restoreReview = {
-        id, isEmergency,
+        resolvedId,
+        isEmergency,
         verify: {
           ok: !!res?.ok,
           integrity_ok: res?.integrity_ok !== false,
@@ -147,19 +159,21 @@
     restoreConfirmText = '';
   }
 
-  async function handleRestore(id: string) {
-    if (!restoreReview || restoreReview.id !== id || restoreConfirmText !== 'RESTORE') {
+  async function handleRestore() {
+    if (!restoreReview || restoreConfirmText !== 'RESTORE') {
       return;
     }
+    // restore the FROZEN resolvedId — never "latest" after review resolved
+    const targetId = restoreReview.resolvedId;
     closeRestoreReview();
-    restoringId = id;
+    restoringId = targetId;
     statusMsg = null;
     try {
-      const res = await rpc('backup.restore', { id }) as RestoreResult;
+      const res = await rpc('backup.restore', { id: targetId }) as RestoreResult;
       const restoredList = res?.restored || [];
       const allOkAndVerified = res && res.ok && restoredList.length > 0 && restoredList.every(r => r.ok && r.verified === true);
       if (allOkAndVerified) {
-        statusMsg = `Backup '${id}' successfully restored and verified on modem!`;
+        statusMsg = `Backup '${targetId}' successfully restored and verified on modem!`;
       } else {
         let msg = res?.error || 'Restore failed (partial restore or verification error)';
         if (res?.rollback) msg += ' (rolled back)';
@@ -272,7 +286,7 @@
         </div>
         <div class="danger-zone card">
           <p class="caption" style="display: grid; gap: 4px;">
-            <span>Backup ID: <span class="mono">{review.id}</span></span>
+            <span>Backup ID: <span class="mono">{review.resolvedId}</span></span>
             <span>{review.verify.entries.length} entr(ies)</span>
             {#if !review.verify.all_match}
               <span style="color: var(--warning);">
@@ -300,7 +314,7 @@
           <button class="btn btn-secondary" onclick={closeRestoreReview}>Cancel</button>
           <button
             class="btn btn-warning"
-            onclick={() => handleRestore(review.id)}
+            onclick={handleRestore}
             disabled={restoreConfirmText !== 'RESTORE' || !review.verify.ok || !review.verify.integrity_ok}
           >
             Restore Backup

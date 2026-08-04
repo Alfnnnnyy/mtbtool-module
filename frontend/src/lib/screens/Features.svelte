@@ -99,9 +99,9 @@
     }
   }
 
-  async function readNrMode() {
+  async function readNrMode(preserveMsg = false) {
     nrModeLoading = true;
-    nrModeMsg = null;
+    if (!preserveMsg) nrModeMsg = null;
     try {
       const res = await rpc('nv.read', { path: NR_MODE_PATH, slot }) as { ok: boolean; bytes?: string; absent?: boolean };
       if (res && res.bytes) {
@@ -160,9 +160,14 @@
         nrModeMsg = `Apply failed (nothing written): ${err ? err.message : String(e)}`;
       }
     } finally {
-      // never assume the modem state: re-read live and reconcile nrMode
+      // never assume the modem state: re-read live and reconcile nrMode,
+      // but WITHOUT erasing the apply result message.
       nrModeLoading = false;
-      await readNrMode();
+      await readNrMode(true);
+      const confirmed = nrMode >= 0 && nrMode <= 2
+        ? `confirmed current: ${NR_LABELS[nrMode]} (byte 0x${nrMode.toString(16).padStart(2, '0')})`
+        : 'confirming current mode failed — see read error above';
+      nrModeMsg = nrModeMsg ? `${nrModeMsg} — ${confirmed}` : `Mode re-read: ${confirmed}`;
     }
   }
 

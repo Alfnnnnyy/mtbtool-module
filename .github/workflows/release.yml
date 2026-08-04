@@ -113,6 +113,13 @@ jobs:
         run: |
           git tag "v${{ steps.ver.outputs.VC }}" && git push origin "v${{ steps.ver.outputs.VC }}" || true
 
+      - name: Verify tag provenance (tag commit must equal build commit)
+        run: |
+          git fetch origin tag "v${{ steps.ver.outputs.VC }}" --force >/dev/null 2>&1 || true
+          TAG_SHA=$(git rev-parse "v${{ steps.ver.outputs.VC }}^{commit}")
+          echo "tag=$TAG_SHA build=$GITHUB_SHA"
+          [ "$TAG_SHA" = "$GITHUB_SHA" ] || { echo "PROVENANCE MISMATCH"; exit 1; }
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

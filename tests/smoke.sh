@@ -151,6 +151,18 @@ PYEOF
 out=$("$BIN" backup verify "$vid" || true)
 check "verify integrity tamper -> integrity_ok false" "echo '$out' | grep -q '\"integrity_ok\":false'"
 
+# --- restore 'latest' TOCTOU regression ---
+# 1. set known value X, snapshot it (A = resolved concrete id via verify)
+$BIN nv write /nv/item_files/modem/mmode/lte_bandpref 11223344 --slot 0 --reason toctou_base >/dev/null
+$BIN backup create --paths /nv/item_files/modem/mmode/lte_bandpref --slot 0 --reason toctou_snap >/dev/null
+resolvedA=$("$BIN" backup verify latest | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+# 2. a NEWER backup appears (value Y) — 'latest' would now resolve to it
+$BIN nv write /nv/item_files/modem/mmode/lte_bandpref aabbccdd --slot 0 --reason toctou_newer >/dev/null
+# 3. restore the FROZEN id A — must restore X, never Y (which is what 'latest' would give)
+$BIN backup restore "$resolvedA" >/dev/null
+out=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
+check "TOCTOU: frozen id restores A not latest" "echo '$out' | grep -q '11223344'"
+
 # --- RPC bridge (mtbctl rpc --b64) ---
 p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)
 out=$("$BIN" rpc --b64 "$p")
