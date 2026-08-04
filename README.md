@@ -144,6 +144,42 @@ flowchart LR
 - [ ] Cell history logging
 - [ ] Module settings (port, theme, poll interval)
 
+## Status & device validation
+
+**Source-level blockers: FIXED** (verified by host build + tests). **Runtime
+Android validation: PENDING** — the vendor modem (`/vendor/bin/mtb`), SELinux
+policy, KernelSU WebUI execution, dual-SIM behavior and hardware rollback have
+NOT yet been exercised on a device. This release is a **device-test candidate**,
+not a stable release.
+
+| Layer | Status |
+|---|---|
+| Source audit blockers | FIXED |
+| Svelte production build / svelte-check / tsc | PASS |
+| Rust tests / fake-mtb protocol smoke | PASS |
+| Release packaging (GA) | PASS |
+| Android ARM64 execution | NOT YET VERIFIED |
+| KernelSU WebUI runtime | NOT YET VERIFIED |
+| Vendor SELinux / QIPCRTR | NOT YET VERIFIED |
+| Real `/vendor/bin/mtb` output format | NOT YET VERIFIED |
+| SIM 0 / SIM 1 behavior | NOT YET VERIFIED |
+| Hardware rollback | NOT YET VERIFIED |
+
+### Device validation staircase (recommended order)
+
+1. Install module, open WebUI, probe `/vendor/bin/mtb`.
+2. All read-only operations (NV read, bandlock get, features check, cells).
+3. Save the RAW mtb output of each read — compare against the parsers.
+4. Backup without dangerous writes (verify `backup list`).
+5. One controlled write of a fully understood item → read-back verification.
+6. Restore that item from backup → verify bytes.
+7. Band lock apply → rollback test.
+8. SIM 1 paths last.
+
+Anything that misbehaves on the device: capture `mtbctl <cmd>` output + the
+raw mtb output, and report it — the fix goes through the normal
+CI + release pipeline (versionCode bump → auto release).
+
 ## Credits & License
 
 - Original app & algorithms: [h3nnes/mtbtool-android-app](https://github.com/h3nnes/mtbtool-android-app)

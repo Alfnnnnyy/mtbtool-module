@@ -34,7 +34,7 @@ jobs:
         run: bash tests/smoke.sh
 
   frontend:
-    name: WebUI (test + build)
+    name: WebUI (check + test + build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +44,9 @@ jobs:
       - name: Install
         working-directory: frontend
         run: npm install
+      - name: Check (svelte-check + tsc)
+        working-directory: frontend
+        run: npm run check
       - name: Test
         working-directory: frontend
         run: npm test

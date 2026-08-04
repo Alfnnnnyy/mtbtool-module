@@ -105,7 +105,7 @@ interface ProbeResult {
     </div>
   {:else if probe}
     {@const isConnected = probe.ok === true && probe.mtb_executable === true}
-    {#if probe.ok && (!probe.mtb_executable || !probe.mtb_responds)}
+    {#if probe.mtb_exists && (!probe.mtb_executable || !probe.mtb_responds)}
       <div class="card status-warn-card" style="border-color: var(--warning); background-color: rgba(255, 171, 0, 0.05); margin-bottom: 12px;">
         <strong style="color: var(--warning);">mtb binary present but not responding (SELinux/QIPCRTR?)</strong>
         <div class="mono caption" style="margin-top: 4px; color: var(--text-secondary);">

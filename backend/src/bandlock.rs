@@ -525,7 +525,8 @@ pub fn detect_bandlock(slot: i32) -> Value {
             "nrNsa": nr_nsa_bands,
             "nrSa": nr_sa_bands
         },
-        "offsets": offsets
+        "offsets": offsets,
+        "raw_byte_count": bytes.len()
     })
 }
 

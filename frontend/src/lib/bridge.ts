@@ -6,9 +6,8 @@ export class ApiError extends Error {
 }
 
 export function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  return promise;
+  // No Promise.withResolvers: old WebViews (Chrome < 119) break on it.
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function encodeBase64Url(input: string | Uint8Array): string {

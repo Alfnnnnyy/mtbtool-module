@@ -6,6 +6,29 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-08-04
+
+### Fixed (audit round 4)
+- **DIAG auto-detect contract**: frontend now reads the backend
+  `bands:{lte,nrNsa,nrSa}` shape (the UI no longer clears the band grid after
+  a successful detection); `raw_byte_count` restored in the response.
+- **latest.json duplication removed**: "latest" resolves dynamically to the
+  newest manifest by timestamp — no best-effort write that could leave a
+  stale emergency-restore target; manifests stay the single source of truth.
+- **backup.restore rollback is verified**: mid-restore failures roll back
+  already-applied entries from a pre-restore snapshot and report
+  `rollback.{attempted,verified,entries}` with read-back verification.
+- **feature restore uses ONE transaction manifest**: only the latest
+  `feature_disable_<id>` backup containing every write path is used; no more
+  mixing entries from different transactions (features share NV paths).
+- **Backup IDs**: nanosecond + pid + atomic counter — collision-free even for
+  bursts in the same process.
+- **Probe warning now reachable in UI**: warning banner shows when the binary
+  exists but does not respond (`mtb.dart_exists && !mtb_executable`).
+- **CI gate**: `svelte-check` + `tsc --noEmit` run before build (frontend
+  deliveries must pass type/structure checks — caught `Promise.withResolvers`
+  and missing `kernelsu` declarations).
+
 ## [1.0.3] - 2026-08-04
 
 ### Security & reliability (audit round 3)

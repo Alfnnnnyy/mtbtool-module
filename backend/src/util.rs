@@ -44,10 +44,22 @@ pub fn perform_verified_rollback(
     slot: i32,
     before_states: &[(String, Option<Vec<u8>>)],
 ) -> serde_json::Value {
+    let states: Vec<(i32, String, Option<Vec<u8>>)> = before_states
+        .iter()
+        .map(|(p, b)| (slot, p.clone(), b.clone()))
+        .collect();
+    perform_verified_rollback_entries(&states)
+}
+
+/// Per-entry variant used when before-states span multiple SIM slots
+/// (e.g. backup.restore). Each entry carries its own slot.
+pub fn perform_verified_rollback_entries(
+    states: &[(i32, String, Option<Vec<u8>>)],
+) -> serde_json::Value {
     let mut entries = Vec::new();
     let mut all_verified = true;
 
-    for (path, before) in before_states {
+    for (slot, path, before) in states {
         let (action, exit) = match before {
             Some(b) => {
                 let mut write_args: Vec<String> =
@@ -78,6 +90,7 @@ pub fn perform_verified_rollback(
         }
 
         entries.push(serde_json::json!({
+            "slot": slot,
             "path": path,
             "action": action,
             "exit": exit,

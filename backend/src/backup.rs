@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::mtb::{ensure_data_dir, exec_mtb, exec_mtb_owned};
@@ -120,9 +121,12 @@ pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, 
         .map_err(|e| e.to_string())?;
     let now_secs = duration.as_secs();
     let millis = now_secs * 1000 + (duration.subsec_millis() as u64);
+    let nanos = duration.subsec_nanos() as u64;
+    static BACKUP_COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = BACKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let pid = std::process::id();
     let safe_reason = reason.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-    let id = format!("{}_{}_{}", millis, pid, safe_reason);
+    let id = format!("{}_{}_{}_{}_{}", millis, nanos, pid, counter, safe_reason);
 
     let backup = Backup {
         version: BACKUP_VERSION,
@@ -155,19 +159,6 @@ pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, 
     // Best-effort directory fsync
     if let Ok(dir_file) = fs::File::open(&backups_dir) {
         let _ = dir_file.sync_all();
-    }
-
-    // Atomic write for latest.json
-    let latest_tmp = backups_dir.join("latest.json.tmp");
-    let latest_final = backups_dir.join("latest.json");
-    if fs::write(&latest_tmp, &json_content).is_ok() {
-        if let Ok(file) = fs::File::open(&latest_tmp) {
-            let _ = file.sync_all();
-        }
-        let _ = fs::rename(&latest_tmp, &latest_final);
-        if let Ok(dir_file) = fs::File::open(&backups_dir) {
-            let _ = dir_file.sync_all();
-        }
     }
 
     Ok(backup)
@@ -214,8 +205,33 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
     let dir = ensure_data_dir().map_err(|e| format!("Data dir error: {}", e))?;
     let backups_dir = dir.join("backups");
 
+    // "latest" resolves dynamically: the newest manifest by its `time` field.
+    // No latest.json duplication — the manifest files are the single source
+    // of truth (atomic tmp+fsync+rename writes make them reliable).
     let file_path = if id == "latest" {
-        backups_dir.join("latest.json")
+        let mut newest: Option<(u64, std::path::PathBuf)> = None;
+        if let Ok(rd) = fs::read_dir(&backups_dir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.extension().and_then(|s| s.to_str()) != Some("json") {
+                    continue;
+                }
+                if p.file_name().and_then(|s| s.to_str()) == Some("latest.json") {
+                    continue; // legacy file, ignore
+                }
+                if let Ok(content) = fs::read_to_string(&p) {
+                    if let Ok(b) = serde_json::from_str::<Backup>(&content) {
+                        if newest.as_ref().map(|(t, _)| b.time > *t).unwrap_or(true) {
+                            newest = Some((b.time, p));
+                        }
+                    }
+                }
+            }
+        }
+        match newest {
+            Some((_, p)) => p,
+            None => return Err("No backups found".to_string()),
+        }
     } else if id.ends_with(".json") {
         backups_dir.join(id)
     } else {
@@ -243,8 +259,10 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
 }
 
 /// Restore a backup. FAILS CLOSED: every entry is integrity-verified BEFORE
-/// any write happens; a single mismatch aborts with no partial restore.
-pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
+/// any write happens; on a mid-restore failure all already-applied entries
+/// are rolled back from the pre-restore snapshot and the rollback itself is
+/// read-back verified.
+pub fn restore_backup(id: &str) -> Result<Value, String> {
     let _lock = crate::mtb::FileLock::acquire().map_err(|e| e.to_string())?;
 
     let backup = get_backup(id)?;
@@ -262,7 +280,7 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
         entry.verify_integrity()?;
     }
 
-    // 2. Pre-read every entry's current state BEFORE applying
+    // 2. Pre-read every entry's current state BEFORE applying (rollback source)
     let mut snapshots: Vec<(i32, String, Option<Vec<u8>>)> = Vec::new();
     for entry in &backup.entries {
         let (exit_before, raw_before) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
@@ -283,9 +301,14 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
                 let raw_bytes = match parse_hex(hex_bytes) {
                     Ok(b) => b,
                     Err(e) => {
-                        // Rollback already applied entries 0..idx
-                        rollback_snapshots(&snapshots[..idx]);
-                        return Err(format!("restore failed at {}, rolled back: {}", entry.path, e));
+                        let rollback =
+                            crate::util::perform_verified_rollback_entries(&snapshots[..idx]);
+                        return Ok(json!({
+                            "ok": false,
+                            "error": format!("restore failed at {}, rolled back: {}", entry.path, e),
+                            "restored": restored,
+                            "rollback": rollback
+                        }));
                     }
                 };
                 let mut write_args: Vec<String> =
@@ -328,27 +351,20 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
         }));
 
         if exit != 0 || !verified {
-            // Rollback already applied entries (0..=idx) from snapshot
-            rollback_snapshots(&snapshots[..=idx]);
-            return Err(format!("restore failed at {}, rolled back", entry.path));
+            // Rollback all applied entries (0..=idx) from snapshot, verified.
+            let rollback = crate::util::perform_verified_rollback_entries(&snapshots[..=idx]);
+            return Ok(json!({
+                "ok": false,
+                "error": format!("restore failed at {}, rolled back", entry.path),
+                "restored": restored,
+                "rollback": rollback
+            }));
         }
     }
 
-    Ok(restored)
+    Ok(json!({
+        "ok": true,
+        "restored": restored
+    }))
 }
 
-fn rollback_snapshots(snapshots: &[(i32, String, Option<Vec<u8>>)]) {
-    for (slot, path, before) in snapshots {
-        match before {
-            Some(b) => {
-                let mut write_args: Vec<String> =
-                    vec!["4".into(), "5".into(), slot.to_string(), path.clone()];
-                write_args.extend(b.iter().map(|byte| byte.to_string()));
-                let _ = exec_mtb_owned(write_args);
-            }
-            None => {
-                let _ = exec_mtb(&["4", "6", &slot.to_string(), path]);
-            }
-        }
-    }
-}

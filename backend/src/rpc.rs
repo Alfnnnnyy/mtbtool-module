@@ -198,12 +198,7 @@ pub fn dispatch(method: &str, params: &Value) -> Value {
                 .or_else(|| parts.get(2).copied())
                 .unwrap_or("latest");
             match restore_backup(id) {
-                Ok(restored) => {
-                    let overall_ok = restored
-                        .iter()
-                        .all(|r| r["ok"] == true && r["verified"] == true);
-                    json!({ "ok": overall_ok, "restored": restored })
-                }
+                Ok(res) => res,
                 Err(e) => json!({ "ok": false, "error": e }),
             }
         }

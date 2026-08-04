@@ -496,31 +496,52 @@ pub fn restore_feature(id: &str, slot: i32) -> Value {
             }
         }
 
-        // Find latest backup containing entry for this slot & path
-        let mut target_entry: Option<BackupEntry> = None;
-        for b_val in &backups_list {
-            if let Ok(b) = serde_json::from_value::<Backup>(b_val.clone()) {
-                if let Some(entry) = b.entries.iter().find(|e| e.slot == slot && e.path == w.path) {
-                    target_entry = Some(entry.clone());
-                    break;
-                }
+    }
+
+    // Restore MUST come from ONE transaction manifest: the latest backup with
+    // reason "feature_disable_<id>" that contains EVERY write path of this
+    // feature for the target slot. Mixing entries from different transactions
+    // (features share NV paths, e.g. MIMO) could silently restore a wrong
+    // state.
+    let expected_reason = format!("feature_disable_{}", id);
+    let mut manifest: Option<Backup> = None;
+    for b_val in &backups_list {
+        if let Ok(b) = serde_json::from_value::<Backup>(b_val.clone()) {
+            if b.reason != expected_reason {
+                continue;
+            }
+            let has_all = feat.writes.iter().all(|w| {
+                b.entries.iter().any(|e| e.slot == slot && e.path == w.path)
+            });
+            if has_all {
+                manifest = Some(b);
+                break; // list is newest-first
             }
         }
+    }
+    let manifest = match manifest {
+        Some(m) => m,
+        None => {
+            return json!({
+                "ok": false,
+                "error": format!("no complete feature_disable_{} backup found, refusing restore", id)
+            });
+        }
+    };
 
-        let entry = match target_entry {
-            Some(e) => e,
+    for w in feat.writes {
+        let entry = match manifest.entries.iter().find(|e| e.slot == slot && e.path == w.path) {
+            Some(e) => e.clone(),
             None => {
                 return json!({
                     "ok": false,
-                    "error": format!("no backup entry for {}, refusing delete-restore", w.path)
+                    "error": format!("manifest missing entry for {}, refusing delete-restore", w.path)
                 });
             }
         };
-
         if let Err(err) = entry.verify_integrity() {
             return json!({ "ok": false, "error": format!("Integrity check failed: {}", err) });
         }
-
         target_entries.push((w.path, entry));
     }
 

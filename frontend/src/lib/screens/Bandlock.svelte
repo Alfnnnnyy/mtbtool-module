@@ -131,11 +131,11 @@
     loading = true;
     statusMsg = null;
     try {
-      const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; lte?: number[]; nrNsa?: number[]; nrSa?: number[]; raw_byte_count?: number };
+      const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; bands?: { lte?: number[]; nrNsa?: number[]; nrSa?: number[] }; raw_byte_count?: number };
       if (res && res.ok) {
-        selectedLte = new Set(res.lte || []);
-        selectedNrNsa = new Set(res.nrNsa || []);
-        selectedNrSa = new Set(res.nrSa || []);
+        selectedLte = new Set(res.bands?.lte || []);
+        selectedNrNsa = new Set(res.bands?.nrNsa || []);
+        selectedNrSa = new Set(res.bands?.nrSa || []);
         statusMsg = `DIAG Auto-detection complete (${res.raw_byte_count || 0} bytes scanned).`;
       }
     } catch (e: unknown) {
