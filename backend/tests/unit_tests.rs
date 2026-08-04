@@ -1,13 +1,16 @@
 use mtbctl::backup::{create_backup, get_backup, list_backups, BackupEntry};
 use mtbctl::bandlock::{
     build_lte_extension, build_lte_primary, build_nr_bitmask, detect_band_offsets,
-    parse_bitmask_bands, parse_lte_extension, parse_lte_primary, parse_nr_bitmask, BandOffsets,
-    ALL_LTE_BANDS, ALL_NR_BANDS,
+    parse_band_list, parse_bitmask_bands, parse_lte_extension, parse_lte_primary, parse_nr_bitmask,
+    BandOffsets, ALL_LTE_BANDS, ALL_NR_BANDS,
 };
 use mtbctl::cells::{parse_asdiv_line, parse_lte_cell, parse_nr_cell, parse_tx_power, LteCellData, NrCellData};
 use mtbctl::features::ALL_FEATURES;
 use mtbctl::importer::parse_import_json;
-use mtbctl::util::{parse_hex, validate_hex, validate_nv_path, validate_slot};
+use mtbctl::util::{
+    parse_efs_read_output, parse_hex, validate_backup_id, validate_hex, validate_nv_path,
+    validate_slot, EfsRead,
+};
 use std::env;
 use std::fs;
 
@@ -260,9 +263,86 @@ fn test_feature_is_disabled_predicates() {
 }
 
 #[test]
-fn test_backup_roundtrip() {
-    let tmp_dir = std::env::temp_dir().join(format!("mtbtest_{}", std::process::id()));
+fn test_backup_entry_semantics() {
+    let entry_some = BackupEntry::new(0, "/nv/item_files/modem/mmode/lte_bandpref".to_string(), Some("0102".to_string()));
+    assert_eq!(entry_some.size, 2);
+    assert!(!entry_some.sha256.is_empty());
+    assert!(entry_some.verify_integrity().is_ok());
+
+    let entry_none = BackupEntry::new(0, "/nv/item_files/modem/mmode/lte_bandpref".to_string(), None);
+    assert_eq!(entry_none.size, 0);
+    assert_eq!(entry_none.sha256, "");
+    assert!(entry_none.verify_integrity().is_ok());
+
+    let mut bad_none = entry_none.clone();
+    bad_none.size = 5;
+    assert!(bad_none.verify_integrity().is_err());
+}
+
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn test_backup_collision() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp_dir = std::env::temp_dir().join(format!("mtbtest_coll_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let _ = fs::create_dir_all(&tmp_dir);
+    env::set_var("MTBTOOL_DIR", tmp_dir.to_str().unwrap());
+
+    let entries = vec![BackupEntry::new(0, "/nv/item_files/modem/mmode/lte_bandpref".to_string(), None)];
+    let b1 = create_backup("coll_test", entries.clone()).unwrap();
+    let b2 = create_backup("coll_test", entries.clone()).unwrap();
+
+    assert_ne!(b1.id, b2.id);
+    let list = list_backups().unwrap();
+    assert_eq!(list.len(), 2);
+    assert!(get_backup(&b1.id).is_ok());
+    assert!(get_backup(&b2.id).is_ok());
+
     let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_backup_traversal() {
+    assert!(validate_backup_id("../../etc/passwd").is_err());
+    assert!(validate_backup_id("/etc/passwd").is_err());
+    assert!(validate_backup_id("..").is_err());
+    assert!(validate_backup_id("x/y").is_err());
+    assert!(validate_backup_id(".dotfile").is_err());
+    assert!(validate_backup_id("-dashfile").is_err());
+    assert!(validate_backup_id("").is_err());
+    assert!(validate_backup_id("latest").is_ok());
+    assert!(validate_backup_id("12345_678_reason").is_ok());
+
+    assert!(get_backup("../../etc/passwd").is_err());
+    assert!(get_backup("/etc/passwd").is_err());
+    assert!(get_backup("..").is_err());
+    assert!(get_backup("x/y").is_err());
+}
+
+#[test]
+fn test_read_states() {
+    assert_eq!(parse_efs_read_output(1, "x"), EfsRead::Error("exit 1".to_string()));
+    assert_eq!(parse_efs_read_output(0, ""), EfsRead::Absent);
+    assert_eq!(
+        parse_efs_read_output(0, "xiaomi_nvefs_test_efs_read: 01\nxiaomi_nvefs_test_efs_read: 02"),
+        EfsRead::Present(vec![1, 2])
+    );
+}
+
+#[test]
+fn test_band_lists() {
+    assert_eq!(parse_band_list(None, ALL_LTE_BANDS, "lte").unwrap(), Vec::<i32>::new());
+    assert_eq!(parse_band_list(Some(""), ALL_LTE_BANDS, "lte").unwrap(), Vec::<i32>::new());
+    assert_eq!(parse_band_list(Some("1, 3, 7"), ALL_LTE_BANDS, "lte").unwrap(), vec![1, 3, 7]);
+    assert!(parse_band_list(Some("1, invalid"), ALL_LTE_BANDS, "lte").is_err());
+    assert!(parse_band_list(Some("1, 9999"), ALL_LTE_BANDS, "lte").is_err());
+}
+
+#[test]
+fn test_backup_roundtrip() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let tmp_dir = std::env::temp_dir().join(format!("mtbtest_rt_{}_{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    let _ = fs::create_dir_all(&tmp_dir);
     env::set_var("MTBTOOL_DIR", tmp_dir.to_str().unwrap());
 
     let entries = vec![

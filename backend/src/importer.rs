@@ -5,7 +5,7 @@ use crate::backup::{create_backup, BackupEntry};
 use crate::mtb::{exec_mtb, exec_mtb_owned, FileLock};
 use crate::util::{
     bytes_to_hex, parse_efs_read_output, parse_hex, validate_hex,
-    validate_nv_path, validate_slot,
+    validate_nv_path, validate_slot, EfsRead,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -147,23 +147,44 @@ pub fn import_apply(json_str: &str) -> Value {
         Err(e) => return json!({ "ok": false, "error": e }),
     };
 
+
+    // 1. Read-before ALL commands across ALL commands up-front before any write.
+    let mut before_states: Vec<(ParsedImportCommand, Option<String>)> = Vec::new();
+    let mut backup_entries = Vec::new();
+
+    for cmd in cmds {
+        let (exit_before, raw_before) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
+        match parse_efs_read_output(exit_before, &raw_before) {
+            EfsRead::Present(bytes_before) => {
+                let before_hex = bytes_to_hex(&bytes_before);
+                backup_entries.push(BackupEntry::new(cmd.slot, cmd.path.clone(), Some(before_hex.clone())));
+                before_states.push((cmd, Some(before_hex)));
+            }
+            EfsRead::Absent => {
+                backup_entries.push(BackupEntry::new(cmd.slot, cmd.path.clone(), None));
+                before_states.push((cmd, None));
+            }
+            EfsRead::Error(e) => {
+                return json!({
+                    "ok": false,
+                    "error": format!("command read-back failed before write: {}", e)
+                });
+            }
+        }
+    }
+
+    // 2. Build ONE backup with all entries
+    let backup = match create_backup("import_apply", backup_entries) {
+        Ok(b) => b,
+        Err(e) => return json!({ "ok": false, "error": format!("Backup failed: {}", e) }),
+    };
+
+    // 3. Write + verify each
     let mut results = Vec::new();
     let mut ok_count = 0usize;
     let mut fail_count = 0usize;
 
-    for cmd in cmds {
-        // Read before
-        let (exit_before, raw_before) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
-        let (absent_before, bytes_before) = parse_efs_read_output(exit_before, &raw_before);
-        let before_hex = if absent_before { None } else { Some(bytes_to_hex(&bytes_before)) };
-
-        // Backup
-        let backup_entry = BackupEntry::new(cmd.slot, cmd.path.clone(), before_hex);
-        let backup_id = match create_backup("import_apply", vec![backup_entry]) {
-            Ok(b) => b.id,
-            Err(_) => "".to_string(),
-        };
-
+    for (cmd, _before_hex) in before_states {
         let (exit, ok, verified) = if cmd.op == "w" {
             if let Some(hex_bytes) = &cmd.bytes {
                 if let Ok(raw) = parse_hex(hex_bytes) {
@@ -175,8 +196,12 @@ pub fn import_apply(json_str: &str) -> Value {
                         // read-back comparison
                         let expected = bytes_to_hex(&raw);
                         let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
-                        let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
-                        (code, true, !absent && bytes_to_hex(&r_bytes) == expected)
+                        let r_read = parse_efs_read_output(r_exit, &r_raw);
+                        let v = match r_read {
+                            EfsRead::Present(r_bytes) => bytes_to_hex(&r_bytes) == expected,
+                            _ => false,
+                        };
+                        (code, true, v)
                     } else {
                         (code, false, false)
                     }
@@ -191,8 +216,9 @@ pub fn import_apply(json_str: &str) -> Value {
             if code == 0 {
                 // item must be absent after delete
                 let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
-                let (absent, _) = parse_efs_read_output(r_exit, &r_raw);
-                (code, true, absent)
+                let r_read = parse_efs_read_output(r_exit, &r_raw);
+                let v = matches!(r_read, EfsRead::Absent);
+                (code, true, v)
             } else {
                 (code, false, false)
             }
@@ -211,7 +237,7 @@ pub fn import_apply(json_str: &str) -> Value {
             "ok": ok,
             "exit": exit,
             "verified": verified,
-            "backup_id": backup_id
+            "backup_id": backup.id.clone()
         }));
     }
 

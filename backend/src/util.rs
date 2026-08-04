@@ -63,9 +63,16 @@ pub fn parse_space_dec(s: &str) -> Result<Vec<u8>, String> {
         .collect()
 }
 
-pub fn parse_efs_read_output(exit_code: i32, raw: &str) -> (bool, Vec<u8>) {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EfsRead {
+    Present(Vec<u8>),
+    Absent,
+    Error(String),
+}
+
+pub fn parse_efs_read_output(exit_code: i32, raw: &str) -> EfsRead {
     if exit_code != 0 {
-        return (true, Vec::new());
+        return EfsRead::Error(format!("exit {}", exit_code));
     }
 
     let mut bytes = Vec::new();
@@ -82,10 +89,34 @@ pub fn parse_efs_read_output(exit_code: i32, raw: &str) -> (bool, Vec<u8>) {
     }
 
     if bytes.is_empty() {
-        (true, Vec::new())
+        EfsRead::Absent
     } else {
-        (false, bytes)
+        EfsRead::Present(bytes)
     }
+}
+
+pub fn validate_backup_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("invalid backup id".to_string());
+    }
+    if id == "latest" {
+        return Ok(());
+    }
+    if id.contains("..")
+        || id.starts_with('.')
+        || id.starts_with('-')
+        || id.contains('/')
+        || id.contains('\\')
+    {
+        return Err("invalid backup id".to_string());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("invalid backup id".to_string());
+    }
+    Ok(())
 }
 
 pub fn parse_diag_response(raw: &str) -> Vec<u8> {

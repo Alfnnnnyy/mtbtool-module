@@ -155,7 +155,19 @@ pub fn dispatch(method: &str, params: &Value) -> Value {
         ),
         "nv delete" => delete_nv(str_arg("path").unwrap_or(""), slot, str_arg("reason")),
         "bandlock get" => get_bandlock(slot),
-        "bandlock set" => set_bandlock(slot, str_arg("lte"), str_arg("nrNsa"), str_arg("nrSa")),
+        "bandlock set" => {
+            let allow_empty = params
+                .get("allowEmpty")
+                .map(|v| v.as_bool().unwrap_or_else(|| v.as_str() == Some("true")))
+                .unwrap_or(false);
+            set_bandlock(
+                slot,
+                str_arg("lte"),
+                str_arg("nrNsa"),
+                str_arg("nrSa"),
+                allow_empty,
+            )
+        }
         "bandlock detect" => detect_bandlock(slot),
         "features check" => check_features(slot),
         "features disable" => disable_feature(str_arg("id").unwrap_or(""), slot),
@@ -182,7 +194,12 @@ pub fn dispatch(method: &str, params: &Value) -> Value {
                 .or_else(|| parts.get(2).copied())
                 .unwrap_or("latest");
             match restore_backup(id) {
-                Ok(restored) => json!({ "ok": true, "restored": restored }),
+                Ok(restored) => {
+                    let overall_ok = restored
+                        .iter()
+                        .all(|r| r["ok"] == true && r["verified"] == true);
+                    json!({ "ok": overall_ok, "restored": restored })
+                }
                 Err(e) => json!({ "ok": false, "error": e }),
             }
         }

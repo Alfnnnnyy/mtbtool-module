@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::backup::{create_backup, list_backups, Backup, BackupEntry};
 use crate::mtb::{exec_mtb, exec_mtb_owned, FileLock};
 use crate::util::{
-    bytes_to_hex, parse_efs_read_output, parse_hex, parse_space_dec, validate_slot,
+    bytes_to_hex, parse_efs_read_output, parse_hex, parse_space_dec, validate_slot, EfsRead,
 };
 
 pub struct NvWriteDef {
@@ -295,24 +295,32 @@ pub fn check_features(slot: i32) -> Value {
 
         for &path in feat.reads {
             let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-            let (absent, bytes) = parse_efs_read_output(exit, &raw);
-
-            let bytes_hex = if absent {
-                "".to_string()
-            } else {
-                bytes_to_hex(&bytes)
-            };
-
-            path_objs.push(json!({
-                "path": path,
-                "absent": absent,
-                "bytes": bytes_hex
-            }));
-
-            if absent {
-                byte_arrays.push(None);
-            } else {
-                byte_arrays.push(Some(bytes));
+            match parse_efs_read_output(exit, &raw) {
+                EfsRead::Present(bytes) => {
+                    path_objs.push(json!({
+                        "path": path,
+                        "absent": false,
+                        "bytes": bytes_to_hex(&bytes)
+                    }));
+                    byte_arrays.push(Some(bytes));
+                }
+                EfsRead::Absent => {
+                    path_objs.push(json!({
+                        "path": path,
+                        "absent": true,
+                        "bytes": ""
+                    }));
+                    byte_arrays.push(None);
+                }
+                EfsRead::Error(e) => {
+                    path_objs.push(json!({
+                        "path": path,
+                        "absent": false,
+                        "bytes": "",
+                        "error": e
+                    }));
+                    byte_arrays.push(None);
+                }
             }
         }
 
@@ -363,11 +371,12 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
     let mut backup_entries = Vec::new();
     for w in feat.writes {
         let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
-        let (absent, bytes) = parse_efs_read_output(exit, &raw);
-        let before_hex = if absent {
-            None
-        } else {
-            Some(bytes_to_hex(&bytes))
+        let before_hex = match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => Some(bytes_to_hex(&b)),
+            EfsRead::Absent => None,
+            EfsRead::Error(e) => {
+                return json!({ "ok": false, "error": format!("Read failed for {}: {}", w.path, e) });
+            }
         };
         backup_entries.push(BackupEntry::new(slot, w.path.to_string(), before_hex));
     }
@@ -405,8 +414,11 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         }
         let expected = bytes_to_hex(&raw_bytes);
         let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
-        let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
-        let verified = !absent && bytes_to_hex(&r_bytes) == expected;
+        let r_read = parse_efs_read_output(r_exit, &r_raw);
+        let verified = match r_read {
+            EfsRead::Present(r_bytes) => bytes_to_hex(&r_bytes) == expected,
+            _ => false,
+        };
         writes.push(json!({
             "path": w.path,
             "backup_id": backup.id,
@@ -443,42 +455,72 @@ pub fn restore_feature(id: &str, slot: i32) -> Value {
 
     for w in feat.writes {
         // Find latest backup containing entry for this slot & path
-        let mut target_bytes: Option<Option<String>> = None;
+        let mut target_entry: Option<BackupEntry> = None;
         for b_val in &backups_list {
             if let Ok(b) = serde_json::from_value::<Backup>(b_val.clone()) {
                 if let Some(entry) = b.entries.iter().find(|e| e.slot == slot && e.path == w.path) {
-                    target_bytes = Some(entry.bytes.clone());
+                    target_entry = Some(entry.clone());
                     break;
                 }
             }
         }
 
-        let (op, ok) = match target_bytes {
-            Some(Some(hex_str)) => {
-                if let Ok(raw_bytes) = parse_hex(&hex_str) {
+        let entry = match target_entry {
+            Some(e) => e,
+            None => {
+                return json!({
+                    "ok": false,
+                    "error": format!("no backup entry for {}, refusing delete-restore", w.path)
+                });
+            }
+        };
+
+        if let Err(err) = entry.verify_integrity() {
+            return json!({ "ok": false, "error": format!("Integrity check failed: {}", err) });
+        }
+
+        let (op, ok, verified) = match &entry.bytes {
+            Some(hex_str) => {
+                if let Ok(raw_bytes) = parse_hex(hex_str) {
                     let mut write_args: Vec<String> =
                         vec!["4".into(), "5".into(), slot.to_string(), w.path.to_string()];
                     write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
                     let (exit, _) = exec_mtb_owned(write_args);
-                    ("write", exit == 0)
+                    if exit == 0 {
+                        let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+                        let r_read = parse_efs_read_output(r_exit, &r_raw);
+                        let v = match r_read {
+                            EfsRead::Present(b) => bytes_to_hex(&b) == *hex_str,
+                            _ => false,
+                        };
+                        ("write", true, v)
+                    } else {
+                        ("write", false, false)
+                    }
                 } else {
-                    ("write", false)
+                    ("write", false, false)
                 }
             }
-            _ => {
-                // Was absent originally or no backup entry found -> delete path to restore modem default
+            None => {
                 let (exit, _) = exec_mtb(&["4", "6", &slot.to_string(), w.path]);
-                ("delete", exit == 0)
+                if exit == 0 {
+                    let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+                    let r_read = parse_efs_read_output(r_exit, &r_raw);
+                    let v = matches!(r_read, EfsRead::Absent);
+                    ("delete", true, v)
+                } else {
+                    ("delete", false, false)
+                }
             }
         };
 
         restored.push(json!({
             "path": w.path,
             "op": op,
-            "ok": ok
+            "ok": ok,
+            "verified": verified
         }));
     }
-
     json!({
         "ok": true,
         "id": id,

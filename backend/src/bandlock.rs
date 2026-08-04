@@ -3,10 +3,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 
 use crate::backup::{create_backup, BackupEntry};
-use crate::mtb::{exec_mtb_owned, exec_mtb, FileLock};
+use crate::mtb::{exec_mtb, exec_mtb_owned, FileLock};
 use crate::util::{
-    bytes_to_hex, parse_diag_response, parse_efs_read_output,
-    validate_slot,
+    bytes_to_hex, parse_diag_response, parse_efs_read_output, validate_slot, EfsRead,
 };
 
 pub const ALL_LTE_BANDS: &[i32] = &[
@@ -228,18 +227,28 @@ pub fn get_bandlock(slot: i32) -> Value {
     }
 
     let paths = paths_for_slot(slot);
+    let mut errors = serde_json::Map::new();
 
-    // Read 4 paths
-    let read_path = |path: &str| -> (i32, bool, Vec<u8>) {
+    let read_path = |path: &str| -> (bool, Vec<u8>, Option<String>) {
         let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-        let (absent, bytes) = parse_efs_read_output(exit, &raw);
-        (exit, absent, bytes)
+        match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(bytes) => (false, bytes, None),
+            EfsRead::Absent => (true, Vec::new(), None),
+            EfsRead::Error(e) => (true, Vec::new(), Some(e)),
+        }
     };
 
-    let (_, lte_pri_absent, lte_pri_bytes) = read_path(&paths.lte_primary);
-    let (_, lte_ext_absent, lte_ext_bytes) = read_path(&paths.lte_extension);
-    let (_, nr_nsa_absent, nr_nsa_bytes) = read_path(&paths.nr_nsa);
-    let (_, nr_sa_absent, nr_sa_bytes) = read_path(&paths.nr);
+    let (lte_pri_absent, lte_pri_bytes, err1) = read_path(&paths.lte_primary);
+    if let Some(e) = err1 { errors.insert(paths.lte_primary.clone(), json!(e)); }
+
+    let (lte_ext_absent, lte_ext_bytes, err2) = read_path(&paths.lte_extension);
+    if let Some(e) = err2 { errors.insert(paths.lte_extension.clone(), json!(e)); }
+
+    let (nr_nsa_absent, nr_nsa_bytes, err3) = read_path(&paths.nr_nsa);
+    if let Some(e) = err3 { errors.insert(paths.nr_nsa.clone(), json!(e)); }
+
+    let (nr_sa_absent, nr_sa_bytes, err4) = read_path(&paths.nr);
+    if let Some(e) = err4 { errors.insert(paths.nr.clone(), json!(e)); }
 
     let lte_pri_hex = if lte_pri_absent { "".to_string() } else { bytes_to_hex(&lte_pri_bytes) };
     let lte_ext_hex = if lte_ext_absent { "".to_string() } else { bytes_to_hex(&lte_ext_bytes) };
@@ -272,14 +281,37 @@ pub fn get_bandlock(slot: i32) -> Value {
             "nrNsa": nr_nsa_bands.into_iter().collect::<Vec<_>>(),
             "nrSa": nr_sa_bands.into_iter().collect::<Vec<_>>()
         },
-        "errors": {}
+        "errors": errors
     })
 }
 
-pub fn parse_band_list(s: &str) -> Vec<i32> {
-    s.split(|c: char| c == ',' || c.is_whitespace())
-        .filter_map(|tok| tok.trim().parse::<i32>().ok())
-        .collect()
+pub fn parse_band_list(
+    s: Option<&str>,
+    known: &[i32],
+    label: &str,
+) -> Result<Vec<i32>, String> {
+    let s = match s {
+        Some(v) => v.trim(),
+        None => return Ok(Vec::new()),
+    };
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut res = Vec::new();
+    for tok in s.split(|c: char| c == ',' || c.is_whitespace()) {
+        let tok = tok.trim();
+        if tok.is_empty() {
+            continue;
+        }
+        let val = tok
+            .parse::<i32>()
+            .map_err(|_| format!("invalid band token '{}' for {}", tok, label))?;
+        if !known.contains(&val) {
+            return Err(format!("invalid band token '{}' for {}", tok, label));
+        }
+        res.push(val);
+    }
+    Ok(res)
 }
 
 pub fn set_bandlock(
@@ -287,9 +319,30 @@ pub fn set_bandlock(
     lte_str: Option<&str>,
     nr_nsa_str: Option<&str>,
     nr_sa_str: Option<&str>,
+    allow_empty: bool,
 ) -> Value {
     if let Err(e) = validate_slot(slot) {
         return json!({ "ok": false, "error": e });
+    }
+
+    let lte_bands = match parse_band_list(lte_str, ALL_LTE_BANDS, "lte") {
+        Ok(b) => b,
+        Err(e) => return json!({ "ok": false, "error": e }),
+    };
+    let nr_nsa_bands = match parse_band_list(nr_nsa_str, ALL_NR_BANDS, "nrNsa") {
+        Ok(b) => b,
+        Err(e) => return json!({ "ok": false, "error": e }),
+    };
+    let nr_sa_bands = match parse_band_list(nr_sa_str, ALL_NR_BANDS, "nrSa") {
+        Ok(b) => b,
+        Err(e) => return json!({ "ok": false, "error": e }),
+    };
+
+    if lte_bands.is_empty() && nr_nsa_bands.is_empty() && nr_sa_bands.is_empty() && !allow_empty {
+        return json!({
+            "ok": false,
+            "error": "refusing zero-band mask: all band lists empty (pass allowEmpty to force)"
+        });
     }
 
     let paths = paths_for_slot(slot);
@@ -299,69 +352,130 @@ pub fn set_bandlock(
         Err(e) => return json!({ "ok": false, "error": e }),
     };
 
-    let mut to_write: Vec<(String, Vec<u8>)> = Vec::new();
+    let targets = vec![
+        (paths.lte_primary.clone(), build_lte_primary(&lte_bands)),
+        (paths.lte_extension.clone(), build_lte_extension(&lte_bands)),
+        (paths.nr_nsa.clone(), build_nr_bitmask(&nr_nsa_bands)),
+        (paths.nr.clone(), build_nr_bitmask(&nr_sa_bands)),
+    ];
 
-    if let Some(lte) = lte_str {
-        let bands = parse_band_list(lte);
-        to_write.push((paths.lte_primary.clone(), build_lte_primary(&bands)));
-        to_write.push((paths.lte_extension.clone(), build_lte_extension(&bands)));
-    }
-    if let Some(nr_nsa) = nr_nsa_str {
-        let bands = parse_band_list(nr_nsa);
-        to_write.push((paths.nr_nsa.clone(), build_nr_bitmask(&bands)));
-    }
-    if let Some(nr_sa) = nr_sa_str {
-        let bands = parse_band_list(nr_sa);
-        to_write.push((paths.nr.clone(), build_nr_bitmask(&bands)));
-    }
+    // 3. Read all 4 paths first; any Error aborts
+    let mut before_states: Vec<(String, Option<Vec<u8>>, Vec<u8>)> = Vec::new();
+    let mut backup_entries = Vec::new();
 
-    if to_write.is_empty() {
-        return json!({ "ok": false, "error": "No band parameters provided" });
-    }
-
-    let mut writes: Vec<Value> = Vec::new();
-    let mut verified = serde_json::Map::new();
-
-    for (path, new_bytes) in to_write {
-        // Read before for backup
-        let (exit_before, raw_before) = exec_mtb(&["4", "4", &slot.to_string(), &path]);
-        let (absent_before, bytes_before) = parse_efs_read_output(exit_before, &raw_before);
-        let before_hex = if absent_before { None } else { Some(bytes_to_hex(&bytes_before)) };
-
-        let backup_entry = BackupEntry::new(slot, path.clone(), before_hex);
-        let backup = match create_backup("bandlock_set", vec![backup_entry]) {
-            Ok(b) => b,
-            Err(e) => {
-                return json!({ "ok": false, "error": format!("Backup failed for {}: {}", path, e) });
+    for (path, new_bytes) in &targets {
+        let (exit_before, raw_before) = exec_mtb(&["4", "4", &slot.to_string(), path]);
+        match parse_efs_read_output(exit_before, &raw_before) {
+            EfsRead::Present(b) => {
+                before_states.push((path.clone(), Some(b.clone()), new_bytes.clone()));
+                backup_entries.push(BackupEntry::new(slot, path.clone(), Some(bytes_to_hex(&b))));
             }
-        };
+            EfsRead::Absent => {
+                before_states.push((path.clone(), None, new_bytes.clone()));
+                backup_entries.push(BackupEntry::new(slot, path.clone(), None));
+            }
+            EfsRead::Error(e) => {
+                return json!({
+                    "ok": false,
+                    "error": e,
+                    "aborted_at": path
+                });
+            }
+        }
+    }
 
-        // Write new bytes — each decimal byte as a separate argv entry
-        let mut write_args: Vec<String> = vec!["4".into(), "5".into(), slot.to_string(), path.to_string()];
+    // 4. Build ONE backup
+    let backup = match create_backup("bandlock_set", backup_entries) {
+        Ok(b) => b,
+        Err(e) => {
+            return json!({ "ok": false, "error": format!("Backup failed: {}", e) });
+        }
+    };
+
+    // 5. Write all 4
+    let mut write_failed = false;
+    let mut writes = Vec::new();
+
+    for (path, _before, new_bytes) in &before_states {
+        let mut write_args: Vec<String> = vec!["4".into(), "5".into(), slot.to_string(), path.clone()];
         write_args.extend(new_bytes.iter().map(|b| b.to_string()));
         let (write_exit, _) = exec_mtb_owned(write_args);
+        writes.push(json!({
+            "path": path,
+            "action": "write",
+            "backup_id": backup.id
+        }));
         if write_exit != 0 {
-            return json!({ "ok": false, "error": format!("Failed to write NV path {}", path) });
+            write_failed = true;
         }
-
-        let written_hex = bytes_to_hex(&new_bytes);
-        let (exit_after, raw_after) = exec_mtb(&["4", "4", &slot.to_string(), &path]);
-        let (_, bytes_after) = parse_efs_read_output(exit_after, &raw_after);
-        verified.insert(
-            path,
-            json!({
-                "bytes": written_hex.clone(),
-                "match": bytes_to_hex(&bytes_after) == written_hex
-            }),
-        );
     }
 
+    // 6. Re-read all 4 & verify
+    let mut verified = serde_json::Map::new();
+    let mut reread_failed = false;
+
+    for (path, _before, new_bytes) in &before_states {
+        let (exit_after, raw_after) = exec_mtb(&["4", "4", &slot.to_string(), path]);
+        match parse_efs_read_output(exit_after, &raw_after) {
+            EfsRead::Present(bytes_after) => {
+                let is_match = bytes_after == *new_bytes;
+                if !is_match {
+                    reread_failed = true;
+                }
+                verified.insert(
+                    path.clone(),
+                    json!({
+                        "bytes": bytes_to_hex(&bytes_after),
+                        "match": is_match
+                    }),
+                );
+            }
+            _ => {
+                reread_failed = true;
+                verified.insert(
+                    path.clone(),
+                    json!({
+                        "bytes": "",
+                        "match": false
+                    }),
+                );
+            }
+        }
+    }
+
+    // 7. If any failure -> ROLLBACK
+    if write_failed || reread_failed {
+        for (path, before, _new) in &before_states {
+            match before {
+                Some(b) => {
+                    let mut write_args: Vec<String> =
+                        vec!["4".into(), "5".into(), slot.to_string(), path.clone()];
+                    write_args.extend(b.iter().map(|byte| byte.to_string()));
+                    let _ = exec_mtb_owned(write_args);
+                }
+                None => {
+                    let _ = exec_mtb(&["4", "6", &slot.to_string(), path]);
+                }
+            }
+        }
+        return json!({
+            "ok": false,
+            "error": "band lock failed, rolled back",
+            "writes": writes,
+            "verified": verified,
+            "rolled_back": true
+        });
+    }
+
+    // 8. Success
     json!({
         "ok": true,
         "writes": writes,
-        "verified": verified
+        "verified": verified,
+        "backup": backup.id
     })
 }
+
 
 pub fn detect_bandlock(slot: i32) -> Value {
     if let Err(e) = validate_slot(slot) {

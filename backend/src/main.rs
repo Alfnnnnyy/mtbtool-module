@@ -31,6 +31,9 @@ fn main() {
     };
 
     println!("{}", serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+    if result.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        std::process::exit(1);
+    }
 }
 
 fn parse_slot(args: &[String]) -> (i32, Vec<String>) {
@@ -118,13 +121,13 @@ fn parse_bandlock_cmd(args: &[String]) -> Value {
 
     let sub = &args[0];
     let (slot, rem) = parse_slot(&args[1..]);
-
     match sub.as_str() {
         "get" => rpc::dispatch("bandlock get", &json!({ "slot": slot })),
         "set" => {
             let mut lte = None;
             let mut nr_nsa = None;
             let mut nr_sa = None;
+            let mut allow_empty = false;
 
             let mut i = 0;
             while i < rem.len() {
@@ -137,6 +140,9 @@ fn parse_bandlock_cmd(args: &[String]) -> Value {
                 } else if rem[i] == "--nrSa" && i + 1 < rem.len() {
                     nr_sa = Some(rem[i + 1].as_str());
                     i += 2;
+                } else if rem[i] == "--allow-empty" {
+                    allow_empty = true;
+                    i += 1;
                 } else {
                     i += 1;
                 }
@@ -148,7 +154,8 @@ fn parse_bandlock_cmd(args: &[String]) -> Value {
                     "slot": slot,
                     "lte": lte,
                     "nrNsa": nr_nsa,
-                    "nrSa": nr_sa
+                    "nrSa": nr_sa,
+                    "allowEmpty": allow_empty
                 }),
             )
         }

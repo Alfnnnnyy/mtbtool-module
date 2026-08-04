@@ -4,7 +4,7 @@ use crate::backup::{create_backup, BackupEntry};
 use crate::mtb::{exec_mtb, exec_mtb_owned, FileLock};
 use crate::util::{
     bytes_to_hex, parse_efs_read_output, parse_hex, validate_hex,
-    validate_nv_path, validate_slot,
+    validate_nv_path, validate_slot, EfsRead,
 };
 
 pub fn read_nv(path: &str, slot: i32) -> Value {
@@ -16,14 +16,25 @@ pub fn read_nv(path: &str, slot: i32) -> Value {
     }
 
     let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-    let (absent, bytes) = parse_efs_read_output(exit, &raw);
-
-    json!({
-        "ok": true,
-        "exit": exit,
-        "absent": absent,
-        "bytes": bytes_to_hex(&bytes)
-    })
+    match parse_efs_read_output(exit, &raw) {
+        EfsRead::Present(bytes) => json!({
+            "ok": true,
+            "exit": exit,
+            "absent": false,
+            "bytes": bytes_to_hex(&bytes)
+        }),
+        EfsRead::Absent => json!({
+            "ok": true,
+            "exit": exit,
+            "absent": true,
+            "bytes": ""
+        }),
+        EfsRead::Error(e) => json!({
+            "ok": false,
+            "absent": true,
+            "error": e
+        }),
+    }
 }
 
 pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> Value {
@@ -53,11 +64,15 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
 
     // 1. Re-read before
     let (before_exit, before_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-    let (before_absent, before_bytes) = parse_efs_read_output(before_exit, &before_raw);
-    let before_hex = if before_absent {
-        None
-    } else {
-        Some(bytes_to_hex(&before_bytes))
+    let before_hex = match parse_efs_read_output(before_exit, &before_raw) {
+        EfsRead::Present(bytes) => Some(bytes_to_hex(&bytes)),
+        EfsRead::Absent => None,
+        EfsRead::Error(e) => {
+            return json!({
+                "ok": false,
+                "error": format!("Read-before-write failed, aborted: {}", e)
+            });
+        }
     };
 
     // 2. Backup before writing
@@ -80,10 +95,14 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
 
     // 4. Re-read verify after
     let (after_exit, after_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-    let (_, after_bytes) = parse_efs_read_output(after_exit, &after_raw);
+    let after_read = parse_efs_read_output(after_exit, &after_raw);
+    let after_bytes = match &after_read {
+        EfsRead::Present(b) => b.as_slice(),
+        _ => &[],
+    };
 
     let expected = hex_str.to_lowercase();
-    let verified = write_exit == 0 && bytes_to_hex(&after_bytes).to_lowercase() == expected;
+    let verified = write_exit == 0 && matches!(after_read, EfsRead::Present(_)) && bytes_to_hex(after_bytes).to_lowercase() == expected;
     json!({
         "ok": write_exit == 0,
         "exit": write_exit,
@@ -108,9 +127,18 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
         Err(e) => return json!({ "ok": false, "error": e }),
     };
 
-    // 1. Backup with null entry
+    // 1. Read current value FIRST (before backup)
+    let (cur_exit, cur_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
+    let before_hex = match parse_efs_read_output(cur_exit, &cur_raw) {
+        EfsRead::Present(bytes) => Some(bytes_to_hex(&bytes)),
+        EfsRead::Absent => None,
+        EfsRead::Error(e) => {
+            return json!({ "ok": false, "error": e });
+        }
+    };
+
     let backup_reason = reason.unwrap_or("nv_delete");
-    let backup_entry = BackupEntry::new(slot, path.to_string(), None);
+    let backup_entry = BackupEntry::new(slot, path.to_string(), before_hex);
     let backup = match create_backup(backup_reason, vec![backup_entry]) {
         Ok(b) => b,
         Err(e) => {
@@ -125,8 +153,8 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
     let (del_exit, _) = exec_mtb(&["4", "6", &slot.to_string(), path]);
     // 3. Verify: item must be absent after delete
     let (v_exit, v_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
-    let (v_absent, v_bytes) = parse_efs_read_output(v_exit, &v_raw);
-    let verified = del_exit == 0 && v_absent && v_bytes.is_empty();
+    let v_read = parse_efs_read_output(v_exit, &v_raw);
+    let verified = del_exit == 0 && matches!(v_read, EfsRead::Absent);
     json!({
         "ok": del_exit == 0,
         "exit": del_exit,

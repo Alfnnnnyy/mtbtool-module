@@ -51,14 +51,29 @@ out=$("$BIN" import apply --json '{"dualsim":{"/nv/item_files/modem/lte/rrc/efs/
 check "import apply dualsim" "echo '$out' | grep -q '\"ok_count\":2'"
 
 # --- security ---
-out=$("$BIN" nv write /data/local/tmp/evil 00 --slot 0)
+out=$("$BIN" nv write /data/local/tmp/evil 00 --slot 0 || true)
 check "path allowlist rejects" "echo '$out' | grep -q 'does not match allowed NV prefixes'"
-out=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 9)
+out=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 9 || true)
 check "slot bounds reject" "echo '$out' | grep -q 'Invalid slot'"
 
 # --- backups + emergency restore ---
 out=$("$BIN" backup restore latest)
-check "emergency restore latest" "echo '$out' | grep -q '\"ok\":true'"
+check "emergency restore latest" "echo '$out' | grep -q '\"ok\":true' && echo '$out' | grep -q '\"verified\":true'"
+
+# --- delete-then-restore roundtrip ---
+"$BIN" nv write /nv/item_files/modem/mmode/lte_bandpref 11223344 --slot 0 --reason pre_del | jqcheck
+"$BIN" nv delete /nv/item_files/modem/mmode/lte_bandpref --slot 0 --reason do_del | jqcheck
+read_del=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
+check "nv delete shows absent" "echo '$read_del' | grep -q '\"absent\":true'"
+rest_out=$("$BIN" backup restore latest)
+check "restore deleted item" "echo '$rest_out' | grep -q '\"ok\":true'"
+read_rest=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
+check "nv restored bytes" "echo '$read_rest' | grep -q '11223344'"
+
+# --- bandlock validation ---
+set_empty=$("$BIN" bandlock set --slot 0 || true)
+check "bandlock set empty rejected" "echo '$set_empty' | grep -q 'refusing zero-band mask'"
+check "bandlock set invalid band exit code" '! "$BIN" bandlock set --lte "9999" --slot 0 > /dev/null 2>&1'
 
 # --- RPC bridge (mtbctl rpc --b64) ---
 b64url() { python3 -c "import base64,sys; print(base64.urlsafe_b64encode(sys.stdin.buffer.read()).rstrip(b'=').decode())"; }
@@ -69,11 +84,10 @@ p2=$(printf '%s' '{"method":"nv.read","params":{"path":"/nv/item_files/modem/mmo
 out=$("$BIN" rpc --b64 "$p2")
 check "rpc nv.read" "echo '$out' | grep -q '\"ok\":true'"
 p3=$(printf '%s' '{"method":"evil.run","params":{}}' | b64url)
-out=$("$BIN" rpc --b64 "$p3")
-check "rpc unknown method rejected" "echo '$out' | grep -q 'Unknown RPC method'"
-out=$("$BIN" rpc --b64 'notbase64!!')
+check "rpc evil method exit code" '! "$BIN" rpc --b64 "$p3" > /dev/null 2>&1'
+out=$("$BIN" rpc --b64 'notbase64!!' || true)
 check "rpc junk rejected" "echo '$out' | grep -q 'rpc decode'"
-out=$("$BIN" rpc --b64 "$(printf '%s' '{"method":"nv.write","params":{"path":"/data/x","hex":"00","slot":0}}' | b64url)")
+out=$("$BIN" rpc --b64 "$(printf '%s' '{"method":"nv.write","params":{"path":"/data/x","hex":"00","slot":0}}' | b64url)" || true)
 check "rpc path allowlist enforced" "echo '$out' | grep -q 'does not match allowed NV prefixes'"
 
 echo

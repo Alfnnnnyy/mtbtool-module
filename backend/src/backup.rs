@@ -5,7 +5,10 @@ use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::mtb::{ensure_data_dir, exec_mtb, exec_mtb_owned};
-use crate::util::{bytes_to_hex, getprop, parse_efs_read_output, parse_hex, validate_nv_path};
+use crate::util::{
+    bytes_to_hex, getprop, parse_efs_read_output, parse_hex, validate_backup_id,
+    validate_nv_path, validate_slot, EfsRead,
+};
 
 pub const BACKUP_VERSION: u32 = 2;
 
@@ -109,18 +112,19 @@ pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, 
     let backups_dir = dir.join("backups");
     fs::create_dir_all(&backups_dir).map_err(|e| format!("Failed to create backups dir: {}", e))?;
 
-    let now = SystemTime::now()
+    let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs();
-
+        .map_err(|e| e.to_string())?;
+    let now_secs = duration.as_secs();
+    let millis = now_secs * 1000 + (duration.subsec_millis() as u64);
+    let pid = std::process::id();
     let safe_reason = reason.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
-    let id = format!("{}_{}", now, safe_reason);
+    let id = format!("{}_{}_{}", millis, pid, safe_reason);
 
     let backup = Backup {
         version: BACKUP_VERSION,
         id: id.clone(),
-        time: now,
+        time: now_secs,
         reason: safe_reason,
         device: getprop("ro.product.device"),
         createdAt: utc_now_iso(),
@@ -177,6 +181,7 @@ pub fn list_backups() -> Result<Vec<Value>, String> {
 }
 
 pub fn get_backup(id: &str) -> Result<Backup, String> {
+    validate_backup_id(id)?;
     let dir = ensure_data_dir().map_err(|e| format!("Data dir error: {}", e))?;
     let backups_dir = dir.join("backups");
 
@@ -192,8 +197,17 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
         return Err(format!("Backup '{}' not found", id));
     }
 
-    let content = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read backup file {:?}: {}", file_path, e))?;
+    let canon_file = fs::canonicalize(&file_path)
+        .map_err(|e| format!("Failed to canonicalize backup path: {}", e))?;
+    let canon_dir = fs::canonicalize(&backups_dir)
+        .map_err(|e| format!("Failed to canonicalize backups dir: {}", e))?;
+
+    if !canon_file.starts_with(&canon_dir) {
+        return Err("invalid backup id".to_string());
+    }
+
+    let content = fs::read_to_string(&canon_file)
+        .map_err(|e| format!("Failed to read backup file {:?}: {}", canon_file, e))?;
 
     serde_json::from_str::<Backup>(&content)
         .map_err(|e| format!("Failed to parse backup JSON: {}", e))
@@ -213,6 +227,7 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
 
     // 1. Verify everything first — nothing is written until all checks pass.
     for entry in &backup.entries {
+        validate_slot(entry.slot)?;
         entry.verify_integrity()?;
     }
 
@@ -232,8 +247,11 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
                 } else {
                     // read-back comparison
                     let (r_exit, r_raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
-                    let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
-                    let verified = !absent && bytes_to_hex(&r_bytes) == *hex_bytes;
+                    let r_read = parse_efs_read_output(r_exit, &r_raw);
+                    let verified = match r_read {
+                        EfsRead::Present(b) => bytes_to_hex(&b) == *hex_bytes,
+                        _ => false,
+                    };
                     (code, true, verified)
                 }
             }
@@ -244,8 +262,9 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
                 } else {
                     // item must be gone after delete
                     let (r_exit, r_raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
-                    let (absent, _) = parse_efs_read_output(r_exit, &r_raw);
-                    (code, true, absent)
+                    let r_read = parse_efs_read_output(r_exit, &r_raw);
+                    let verified = matches!(r_read, EfsRead::Absent);
+                    (code, true, verified)
                 }
             }
         };

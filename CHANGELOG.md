@@ -6,6 +6,33 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-08-04
+
+### Security & reliability (audit round 2)
+- **Delete recovery**: `nv delete` now backs up the REAL current bytes first —
+  emergency restore re-writes them instead of deleting again.
+- **Transactional band lock**: all 4 NV paths are read + backed up in ONE
+  transaction, then written and read-back-verified; any failure triggers an
+  automatic rollback and `ok:false` (no partial lock).
+- **Import is fail-closed**: all before-states are read and backed up before
+  any write; a read or backup failure aborts the entire import.
+- **Three-state reads**: `Present / Absent / ReadError` are now distinct —
+  read errors (SELinux, modem, timeout) abort writes instead of being treated
+  as "item absent" and overwritten without a valid backup.
+- **Strict band validation**: band tokens must be valid 3GPP band numbers;
+  all-empty band lists are rejected unless `allowEmpty` is explicitly passed
+  (guards against accidental zero masks disabling all connectivity).
+- **Backup integrity**: unique IDs (ms + pid, no collision), backup-ID
+  traversal rejected, restore verifies every entry's checksum + slot before
+  writing, and `ok:true` for restore now requires every item verified.
+- **Exit codes**: `mtbctl` exits non-zero whenever the response is `ok:false`
+  (action.sh and scripts can no longer report false success).
+- **Feature restore safety**: refuses to delete an NV item when no valid
+  backup entry exists; restore entries are checksum-verified and
+  read-back-verified.
+- Tests: backup collision, ID traversal, three-state parsing, band-list
+  validation, delete-restore roundtrip + RPC exit codes in the smoke suite.
+
 ## [1.0.1] - 2026-08-04
 
 ### Security (audit fixes)
