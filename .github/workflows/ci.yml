@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Test
-        run: cargo test --manifest-path backend/Cargo.toml --release
+        run: cargo test --manifest-path backend/Cargo.toml --release -- --test-threads=1
 
   smoke:
     name: Backend protocol smoke (fake mtb)
