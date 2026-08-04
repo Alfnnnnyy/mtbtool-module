@@ -96,9 +96,11 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
     };
     let backup_id = backup.id.clone();
 
-    // 3. Write via mtb: 4 5 <slot> <path> <dec byte per arg> — from here on
-    // the modem write WAS attempted; outcomes may be unknown, never "nothing
-    // written".
+    // 3. Write via mtb: 4 5 <slot> <path> <dec byte per arg> — from here
+    // on the modem write WAS attempted; outcomes may be unknown, never
+    // "nothing written". The live read-back is the source of truth, even
+    // when the write command exited nonzero (it may have partially or fully
+    // changed modem state).
     let mut write_args: Vec<String> = vec!["4".into(), "5".into(), slot.to_string(), path.to_string()];
     write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
     let (write_exit, _) = exec_mtb_owned(write_args);
@@ -106,58 +108,100 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
     // 4. Re-read verify after
     let (after_exit, after_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
     let after_read = parse_efs_read_output(after_exit, &after_raw);
-    let after_bytes = match &after_read {
-        EfsRead::Present(b) => b.as_slice(),
-        _ => &[],
-    };
 
     let expected = hex_str.to_lowercase();
-    let is_present = matches!(after_read, EfsRead::Present(_));
-    let verified = write_exit == 0 && is_present && bytes_to_hex(after_bytes).to_lowercase() == expected;
-    let ok = write_exit == 0 && verified;
+    let observed_hex = match &after_read {
+        EfsRead::Present(b) => Some(bytes_to_hex(b)),
+        EfsRead::Absent => None,
+        EfsRead::Error(e) => {
+            // case C: unreadable — cannot classify; rollback from snapshot
+            let before_bytes = before_hex.as_deref().and_then(|h| parse_hex(h).ok());
+            let rollback_before = vec![(path.to_string(), before_bytes)];
+            let rollback_obj = crate::util::perform_verified_rollback(slot, &rollback_before);
+            return json!({
+                "ok": false,
+                "exit": write_exit,
+                "before": before_hex,
+                "after": Value::Null,
+                "expected": expected,
+                "observed_after": Value::Null,
+                "verify_read_error": e,
+                "verified": false,
+                "write_attempted": true,
+                "stage": "rollback",
+                "backup_id": backup_id,
+                "rollback_attempted": true,
+                "rollback_verified": rollback_obj["verified"] == true,
+                "rollback": rollback_obj,
+                "backup": backup
+            });
+        }
+    };
 
-    let mut rollback_attempted = false;
-    let mut rollback_verified = false;
-    let mut rollback_obj = Value::Null;
-    if write_exit == 0 && !verified {
-        // verification failed — attempt auto-restore from the backup
-        rollback_attempted = true;
-        let before_bytes = before_hex.as_deref().and_then(|h| parse_hex(h).ok());
-        let rollback_before = vec![(path.to_string(), before_bytes)];
-        rollback_obj = crate::util::perform_verified_rollback(slot, &rollback_before);
-        rollback_verified = rollback_obj["verified"] == true;
+    // Classification: A = observed == target; B = observed == pre-write
+    // (write had no effect); C = anything else (another value or absent).
+    let verified = observed_hex.as_deref() == Some(expected.as_str());
+    let unchanged = observed_hex.as_deref() == before_hex.as_deref();
+
+    if verified {
+        // A: final state is confirmed target. write_exit stays a diagnostic.
+        json!({
+            "ok": true,
+            "exit": write_exit,
+            "before": before_hex,
+            "after": observed_hex,
+            "expected": expected,
+            "observed_after": observed_hex,
+            "verified": true,
+            "write_attempted": true,
+            "stage": "verify",
+            "backup_id": backup_id,
+            "rollback_attempted": false,
+            "rollback_verified": false,
+            "backup": backup
+        })
+    } else if unchanged {
+        // B: modem state unchanged — the write command failed to apply.
         json!({
             "ok": false,
             "exit": write_exit,
             "before": before_hex,
-            "after": if is_present { Some(bytes_to_hex(after_bytes)) } else { None },
+            "after": observed_hex,
             "expected": expected,
+            "observed_after": observed_hex,
             "verified": false,
             "write_attempted": true,
-            "stage": if rollback_attempted { "rollback" } else { "verify" },
+            "stage": "write",
             "backup_id": backup_id,
-            "rollback_attempted": rollback_attempted,
-            "rollback_verified": rollback_verified,
-            "rollback": rollback_obj,
+            "rollback_attempted": false,
+            "rollback_verified": false,
             "backup": backup
         })
     } else {
+        // C: another value or unexpectedly absent — unsafe state; roll back
+        // from the pre-write snapshot regardless of write_exit.
+        let before_bytes = before_hex.as_deref().and_then(|h| parse_hex(h).ok());
+        let rollback_before = vec![(path.to_string(), before_bytes)];
+        let rollback_obj = crate::util::perform_verified_rollback(slot, &rollback_before);
         json!({
-            "ok": ok,
+            "ok": false,
             "exit": write_exit,
             "before": before_hex,
-            "after": if is_present { Some(bytes_to_hex(after_bytes)) } else { None },
+            "after": observed_hex,
             "expected": expected,
-            "verified": verified,
+            "observed_after": observed_hex,
+            "verified": false,
             "write_attempted": true,
-            "stage": "verify",
+            "stage": "rollback",
             "backup_id": backup_id,
-            "rollback_attempted": rollback_attempted,
-            "rollback_verified": rollback_verified,
+            "rollback_attempted": true,
+            "rollback_verified": rollback_obj["verified"] == true,
+            "rollback": rollback_obj,
             "backup": backup
         })
     }
 }
+
 
 pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
     if let Err(e) = validate_nv_path(path) {

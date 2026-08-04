@@ -6,6 +6,28 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.15] - 2026-08-04
+
+### Fixed (audit round: strict write-state classifier + nonzero-exit read-back truth)
+- **Strict three-way classifier** (`classifyWriteState`): `write_attempted`
+  must be EXACTLY `true` (attempted) or `false` (nothing written); missing,
+  null or wrong-typed values report "Apply result incomplete — write state
+  is unknown" — a malformed payload never claims "nothing written". Applied
+  to both resolved responses and rejected ApiError.payload paths; 3
+  integration + unit regressions.
+- **Nonzero write exit is now classified by the live read-back** (source of
+  truth, not the exit code): A) read-back == target → verified:true, final
+  state confirmed, exit kept as diagnostic; B) read-back == pre-write value
+  → verified:false, state unchanged, no unnecessary rollback, stage "write";
+  C) other value / unexpected absent / unreadable → rollback attempted from
+  the pre-write snapshot regardless of exit, stage "rollback", observed byte
+  or `verify_read_error` exposed. Responses always include write_attempted,
+  stage, write_exit, backup_id, verified, observed_after|verify_read_error,
+  rollback_attempted, rollback_verified.
+- **fake-mtb error modes** (one-shot): store-target+exit1, store-bad+exit1,
+  nochange+exit1, store-target+exit1+next-read-fails — with 12 smoke
+  regressions covering all classifications.
+
 ## [1.0.14] - 2026-08-04
 
 ### Fixed (audit round: write-state contract + tested orchestrator in production)

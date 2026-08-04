@@ -9,6 +9,10 @@ case "$1" in
     k=$(key "$slot" "$path")
     case "$op" in
       4) # read — REAL peridot format: per-byte tagged lines, printed TWICE
+        if [ -f "$STORE/.readfail" ]; then
+          rm -f "$STORE/.readfail"
+          exit 3
+        fi
         # (mtb: block then RIL block), plus a "data len(N)" declaration.
         # FAKE_MTB_FAIL_PATH => exit 3 (read error).
         # FAKE_MTB_QMI_FAIL=1  => exit 0 but QMI failure markers, no bytes
@@ -42,6 +46,23 @@ case "$1" in
         for b in "$@"; do hex="$hex$(printf '%02x' "$b")"; done
         if [ -n "${FAKE_MTB_FAIL_WRITE:-}" ] && [[ "$hex" == *"$FAKE_MTB_FAIL_WRITE"* ]]; then
           hex="00"
+        fi
+        # error-injection modes: the write IS attempted, then exit nonzero.
+        # Each mode is ONE-SHOT (flag file) so rollback writes inside the
+        # same test behave normally instead of re-triggering the mode.
+        if [ "${FAKE_MTB_WRITE_ERR_STORE_TARGET:-0}" = "1" ] && [ ! -f "$STORE/.err_store_target" ]; then
+          printf '%s' "$hex" > "$STORE/$k"; touch "$STORE/.err_store_target"; exit 1
+        fi
+        if [ "${FAKE_MTB_WRITE_ERR_STORE_BAD:-0}" = "1" ] && [ ! -f "$STORE/.err_store_bad" ]; then
+          printf '00' > "$STORE/$k"; touch "$STORE/.err_store_bad"; exit 1
+        fi
+        if [ "${FAKE_MTB_WRITE_ERR_NOCHANGE:-0}" = "1" ] && [ ! -f "$STORE/.err_nochange" ]; then
+          touch "$STORE/.err_nochange"; exit 1
+        fi
+        if [ "${FAKE_MTB_WRITE_ERR_READFAIL:-0}" = "1" ] && [ ! -f "$STORE/.err_readfail" ]; then
+          printf '%s' "$hex" > "$STORE/$k"
+          touch "$STORE/.readfail" "$STORE/.err_readfail"
+          exit 1
         fi
         printf '%s' "$hex" > "$STORE/$k"
         exit 0

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg, runNrModeApply } from './helpers';
+import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem, composeNrModeResultMsg, runNrModeApply, classifyWriteState } from './helpers';
 import { encodeBase64Url } from './bridge';
 
 describe('helpers', () => {
@@ -138,5 +138,35 @@ describe('runNrModeApply (production orchestrator, injected mocks)', () => {
     expect(msg).toContain('rollback attempted, verified NO');
     expect(msg).toContain('(backup b1)');
     expect(msg).toContain('unknown');
+  });
+});
+
+describe('three-way write-state classifier (missing write_attempted)', () => {
+  it('resolved {ok:false} without write_attempted must say unknown, not nothing written', async () => {
+    const write = () => Promise.resolve({ ok: false, error: 'x' });
+    const reRead = () => Promise.resolve({ ok: true, value: 1, byte: '01', error: '' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('write state is unknown');
+    expect(msg).toContain('confirmed current');
+  });
+
+  it('rejected payload {ok:false} without write_attempted must say unknown, not nothing written', async () => {
+    const err = new Error('transport');
+    (err as unknown as { payload?: unknown }).payload = { ok: false, error: 'x' };
+    const write = () => Promise.reject(err);
+    const reRead = () => Promise.resolve({ ok: false, value: null, byte: '', error: 'read fail' });
+    const msg = await runNrModeApply(write, reRead);
+    expect(msg).not.toContain('nothing written');
+    expect(msg).toContain('write state is unknown');
+    expect(msg).toContain('live re-read failed');
+  });
+
+  it('null/wrong-typed write_attempted also classifies unknown', () => {
+    expect(classifyWriteState({ ok: false, error: 'x', write_attempted: null as unknown as boolean }).kind).toBe('unknown');
+    expect(classifyWriteState({ ok: false, error: 'x', write_attempted: 'yes' as unknown as boolean }).kind).toBe('unknown');
+    expect(classifyWriteState({ ok: false, error: 'x' }).kind).toBe('unknown');
+    expect(classifyWriteState({ ok: false, error: 'x', write_attempted: true }).kind).toBe('attempted');
+    expect(classifyWriteState({ ok: false, error: 'x', write_attempted: false }).kind).toBe('not_written');
   });
 });

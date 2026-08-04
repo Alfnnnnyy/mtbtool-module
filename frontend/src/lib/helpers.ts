@@ -90,6 +90,21 @@ export interface NrWritePayload {
  * - after every outcome a live re-read decides "confirmed current" vs
  *   "current state unknown"
  */
+/**
+ * Strict three-way write-state classifier. Only EXACT `true`/`false` prove
+ * anything: true = write attempted; false = write never reached the modem;
+ * anything else (missing, null, wrong type) = unknown — never "nothing
+ * written".
+ */
+export function classifyWriteState(p: NrWritePayload | undefined):
+  { kind: 'attempted'; payload: NrWritePayload }
+  | { kind: 'not_written'; payload: NrWritePayload }
+  | { kind: 'unknown'; reason: string } {
+  if (p && p.write_attempted === true) return { kind: 'attempted', payload: p };
+  if (p && p.write_attempted === false) return { kind: 'not_written', payload: p };
+  return { kind: 'unknown', reason: 'write_attempted missing or malformed' };
+}
+
 export async function runNrModeApply(
   write: () => Promise<unknown>,
   reRead: () => Promise<NrReReadResult>,
@@ -103,13 +118,16 @@ export async function runNrModeApply(
       base = `NR mode written but read-back verification FAILED (backup ${res.backup_id || '?'})` +
         (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '');
     } else if (res && res.ok === false) {
-      if (res.write_attempted === true) {
+      const clsState = classifyWriteState(res);
+      if (clsState.kind === 'attempted') {
         base = `Apply attempted (stage ${res.stage || '?'}): ${res.error || 'verification failed'}` +
           (res.rollback_attempted ? ` — rollback attempted, verified ${res.rollback_verified === true ? 'yes' : 'NO'}` : '') +
           (res.backup_id ? ` (backup ${res.backup_id})` : '');
-      } else {
+      } else if (clsState.kind === 'not_written') {
         // backend explicitly says the write never reached the modem write stage
         base = `Apply failed (nothing written, stage ${res.stage || '?'}): ${res.error || 'unknown error'}`;
+      } else {
+        base = `Apply result incomplete — write state is unknown (${res.error || clsState.reason})`;
       }
     } else {
       base = 'Apply result incomplete — write state is unknown';
@@ -118,11 +136,12 @@ export async function runNrModeApply(
     const err = e as { payload?: unknown; message?: string };
     if (err && err.payload && typeof err.payload === 'object') {
       const payload = err.payload as NrWritePayload;
-      if (payload.ok === false && payload.write_attempted === true) {
+      const clsState = classifyWriteState(payload as NrWritePayload | undefined);
+      if (payload.ok === false && clsState.kind === 'attempted') {
         base = `Apply attempted (stage ${payload.stage || '?'}): ${payload.error || 'verification failed'}` +
           (payload.rollback_attempted ? ` — rollback attempted, verified ${payload.rollback_verified === true ? 'yes' : 'NO'}` : '') +
           (payload.backup_id ? ` (backup ${payload.backup_id})` : '');
-      } else if (payload.ok === false) {
+      } else if (payload.ok === false && clsState.kind === 'not_written') {
         base = `Apply failed (nothing written, stage ${payload.stage || '?'}): ${payload.error || 'unknown error'}`;
       } else {
         base = `Apply result unavailable — write state is unknown (${err.message || 'transport error'})`;

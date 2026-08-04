@@ -37,6 +37,29 @@ check "nv.write reports backup_id" "echo '$out' | grep -q '\"backup_id\":\"[0-9]
 out=$("$BIN" nv write /data/local/tmp/evil 00 --slot 0 || true)
 check "nv.write validation write_attempted false" "echo '$out' | grep -q '\"write_attempted\":false'"
 
+# --- write exit!=0 read-back classification (source of truth = live read) ---
+P=/nv/item_files/modem/mmode/lte_bandpref_extn_65_256
+# 1. write stores target then exits nonzero -> verified true (target confirmed)
+out=$(FAKE_MTB_WRITE_ERR_STORE_TARGET=1 "$BIN" nv write "$P" aabb --slot 0 --reason err_tgt)
+check "write-err: target stored+exit1 -> verified" "echo '$out' | grep -q '\"verified\":true'"
+check "write-err: target stored+exit1 -> ok true" "echo '$out' | grep -q '\"ok\":true'"
+check "write-err: exit preserved as diagnostic" "echo '$out' | grep -q '\"exit\":1'"
+# 2. write stores unexpected bytes then exits nonzero -> rollback verified
+out=$(FAKE_MTB_WRITE_ERR_STORE_BAD=1 "$BIN" nv write "$P" aabb --slot 0 --reason err_bad || true)
+check "write-err: bad store -> rollback attempted" "echo '$out' | grep -q '\"rollback_attempted\":true'"
+check "write-err: bad store -> rollback verified" "echo '$out' | grep -q '\"rollback_verified\":true'"
+check "write-err: bad store -> stage rollback" "echo '$out' | grep -q '\"stage\":\"rollback\"'"
+# 3. write changes nothing then exits nonzero -> unchanged, no rollback
+out=$(FAKE_MTB_WRITE_ERR_NOCHANGE=1 "$BIN" nv write "$P" ccdd --slot 0 --reason err_nc || true)
+check "write-err: nochange -> ok false" "echo '$out' | grep -q '\"ok\":false'"
+check "write-err: nochange -> no rollback" "echo '$out' | grep -q '\"rollback_attempted\":false'"
+check "write-err: nochange -> stage write" "echo '$out' | grep -q '\"stage\":\"write\"'"
+# 4. write exits nonzero and follow-up read fails -> rollback attempted
+out=$(FAKE_MTB_WRITE_ERR_READFAIL=1 "$BIN" nv write "$P" aabb --slot 0 --reason err_rf || true)
+check "write-err: readfail -> rollback attempted" "echo '$out' | grep -q '\"rollback_attempted\":true'"
+check "write-err: readfail -> verify_read_error present" "echo '$out' | grep -q 'verify_read_error'"
+check "write-err: readfail -> write_attempted true" "echo '$out' | grep -q '\"write_attempted\":true'"
+
 # --- bandlock set/get ---
 out=$("$BIN" bandlock set --lte "1,3,7,8,40" --nrNsa "78" --slot 0)
 check "bandlock set ok" "echo '$out' | grep -q '\"ok\":true'"
