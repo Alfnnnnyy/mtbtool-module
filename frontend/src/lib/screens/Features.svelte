@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rpc } from '../bridge';
+  import { rpc, bridgeStatus } from '../bridge';
   import { RefreshCw, Sliders, CheckCircle2, XCircle, HelpCircle, AlertOctagon } from 'lucide-svelte';
 
   interface FeatureWriteResult {
@@ -160,21 +160,21 @@
       <button
         class={`segmented-tab ${nrMode === 0 ? 'active' : ''}`}
         onclick={() => writeNrMode(0)}
-        disabled={nrModeLoading}
+        disabled={nrModeLoading || !$bridgeStatus.ready}
       >
         SA + NSA (Both)
       </button>
       <button
         class={`segmented-tab ${nrMode === 1 ? 'active' : ''}`}
         onclick={() => writeNrMode(1)}
-        disabled={nrModeLoading}
+        disabled={nrModeLoading || !$bridgeStatus.ready}
       >
         NSA Only
       </button>
       <button
         class={`segmented-tab ${nrMode === 2 ? 'active' : ''}`}
         onclick={() => writeNrMode(2)}
-        disabled={nrModeLoading}
+        disabled={nrModeLoading || !$bridgeStatus.ready}
       >
         SA Only
       </button>
@@ -211,7 +211,7 @@
           <button
             class={`btn ${feat.status === 'disabled' ? 'btn-primary' : 'btn-secondary'}`}
             onclick={() => toggleFeature(feat)}
-            disabled={loading || feat.status === 'absent'}
+            disabled={loading || feat.status === 'absent' || !$bridgeStatus.ready}
           >
             {feat.status === 'disabled' ? 'Restore' : 'Disable'}
           </button>

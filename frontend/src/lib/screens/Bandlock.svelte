@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rpc } from '../bridge';
+  import { rpc, bridgeStatus } from '../bridge';
   import { ALL_LTE_BANDS, ALL_NR_BANDS, toggleSetItem } from '../helpers';
   import { Radio, RefreshCw, AlertTriangle, ShieldCheck, CheckSquare, Square } from 'lucide-svelte';
 
@@ -310,7 +310,7 @@
     <button class="btn btn-secondary" onclick={loadBands} disabled={loading}>
       <RefreshCw size={16} class={loading ? 'spin' : ''} /> Reload On-Modem NV
     </button>
-    <button class="btn btn-danger" onclick={handleRestartModem}>
+    <button class="btn btn-danger" onclick={handleRestartModem} disabled={!$bridgeStatus.ready}>
       Restart Modem
     </button>
   </div>
@@ -428,7 +428,7 @@
     <button
       class="btn btn-primary"
       onclick={checkEmptyCategoriesAndProceed}
-      disabled={loading || !hasChanges || (getResult !== null && getResult.ok === false)}
+      disabled={loading || !hasChanges || (getResult !== null && getResult.ok === false) || !$bridgeStatus.ready}
     >
       <ShieldCheck size={16} /> Preview & Apply
     </button>

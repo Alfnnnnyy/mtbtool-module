@@ -1,30 +1,20 @@
 <script lang="ts">
   import './lib/theme.css';
-  import { rpc } from './lib/bridge';
+  import { bridgeStatus, runSelfTest, refreshProbe } from './lib/bridge';
   import Dashboard from './lib/screens/Dashboard.svelte';
   import Bandlock from './lib/screens/Bandlock.svelte';
   import Features from './lib/screens/Features.svelte';
   import NvImport from './lib/screens/NvImport.svelte';
   import Cells from './lib/screens/Cells.svelte';
   import Backups from './lib/screens/Backups.svelte';
-  import { Home, Radio, Sliders, Search, Activity, Archive, Cpu } from 'lucide-svelte';
+  import { Home, Radio, Sliders, Search, Activity, Archive, Cpu, AlertOctagon } from 'lucide-svelte';
 
   let activeScreen = $state<string>('dashboard');
-  let probeOk = $state<boolean | null>(null);
-  let probeModel = $state<string>('Unknown Model');
 
-  async function checkStatus() {
-    try {
-      const res = await rpc('probe') as { ok: boolean; model?: string };
-      probeOk = res && res.ok;
-      if (res && res.model) probeModel = res.model;
-    } catch {
-      probeOk = false;
-    }
-  }
-
+  // Single source of truth for connectivity: bridgeStatus.ready is only true
+  // after the bridge self-test (`mtbctl probe`) succeeds.
   $effect(() => {
-    checkStatus();
+    void runSelfTest().then(() => refreshProbe());
   });
 </script>
 
@@ -34,18 +24,25 @@
     <div class="brand">
       <Cpu size={20} class="brand-icon" />
       <span class="brand-name">MTB Control</span>
-      <span class="mono caption model-tag">{probeModel}</span>
+      <span class="mono caption model-tag">{$bridgeStatus.probe?.model || 'Unknown Model'}</span>
     </div>
     <div class="status-indicator">
-      {#if probeOk === null}
+      {#if !$bridgeStatus.selfTest.ran}
         <span class="chip status-info">Probing Backend...</span>
-      {:else if probeOk}
+      {:else if $bridgeStatus.ready}
         <span class="chip status-ok">Backend Connected</span>
       {:else}
         <span class="chip status-err">CLI Error / Disconnected</span>
       {/if}
     </div>
   </header>
+
+  {#if !$bridgeStatus.ready}
+    <div class="bridge-banner status-err">
+      <AlertOctagon size={14} />
+      <span>{$bridgeStatus.error || 'Bridge unavailable — mutations disabled (read-only views stay active)'}</span>
+    </div>
+  {/if}
 
   <!-- Main Content Viewport -->
   <main class="content-area">
@@ -151,6 +148,18 @@
     border-radius: 4px;
     font-size: 11px;
     color: var(--text-muted);
+  }
+  .bridge-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface-1);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 8px 14px;
+    font-size: 12px;
+    margin-bottom: 12px;
+    border-radius: var(--radius-control);
   }
   .content-area {
     flex: 1;

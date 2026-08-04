@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rpc } from '../bridge';
+  import { rpc, bridgeStatus } from '../bridge';
   import { Play, Square, Activity, Zap } from 'lucide-svelte';
 
   interface CellItem {
@@ -62,7 +62,7 @@
   }
 
   async function fetchCells() {
-    if (document.hidden || !pollingActive) return;
+    if (document.hidden || !pollingActive || !$bridgeStatus.ready) return;
     try {
       const res = await rpc('cells.get', { slot }) as CellsResponse;
       if (res && res.ok) {
@@ -84,7 +84,7 @@
     }, pollIntervalSec * 1000);
 
     const onVisibilityChange = () => {
-      if (!document.hidden && pollingActive) {
+      if (!document.hidden && pollingActive && $bridgeStatus.ready) {
         fetchCells();
       }
     };

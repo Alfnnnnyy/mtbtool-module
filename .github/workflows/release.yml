@@ -90,7 +90,9 @@ jobs:
           npm run build
           ls ../webroot/assets/
           grep -q 'MTB Control' ../webroot/assets/index-*.js || { echo "marker missing"; exit 1; }
-          grep -q 'kernelsu' ../webroot/assets/index-*.js || { echo "kernelsu import missing"; exit 1; }
+          grep -q 'ksu.exec' ../webroot/assets/index-*.js || { echo "kernelsu bridge not bundled"; exit 1; }
+          if grep -q 'import("kernelsu")' ../webroot/assets/index-*.js; then echo "dynamic kernelsu import present"; exit 1; fi
+          if grep -qE 'from\"kernelsu\"' ../webroot/assets/index-*.js; then echo "bare kernelsu specifier present"; exit 1; fi
 
       - name: Package module zip
         run: |

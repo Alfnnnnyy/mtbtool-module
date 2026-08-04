@@ -1,5 +1,6 @@
 <script lang="ts">
   import { rpc } from '../bridge';
+  import { bridgeStatus } from '../bridge';
   import { FileCode, Upload, Search, CheckCircle2, AlertCircle } from 'lucide-svelte';
 
   interface ReadNvResult {
@@ -288,10 +289,10 @@
         <input id="write-hex" type="text" class="input mono" bind:value={writeHex} placeholder="e.g. 01000000..." />
       </div>
       <div class="row-flex" style="margin-top: 8px;">
-        <button class="btn btn-secondary" onclick={handleWriteNv} disabled={singleActionLoading || !writeHex.trim()}>
+        <button class="btn btn-secondary" onclick={handleWriteNv} disabled={singleActionLoading || !writeHex.trim() || !$bridgeStatus.ready}>
           {singleActionLoading ? 'Writing...' : 'Write NV Item'}
         </button>
-        <button class="btn btn-danger" onclick={handleDeleteNv} disabled={singleActionLoading}>
+        <button class="btn btn-danger" onclick={handleDeleteNv} disabled={singleActionLoading || !$bridgeStatus.ready}>
           {singleActionLoading ? 'Deleting...' : 'Delete NV Item'}
         </button>
       </div>
@@ -391,7 +392,7 @@
             </table>
           </div>
 
-          <button class="btn btn-danger apply-import-btn" onclick={handleApplyImport} disabled={importApplying}>
+          <button class="btn btn-danger apply-import-btn" onclick={handleApplyImport} disabled={importApplying || !$bridgeStatus.ready}>
             {importApplying ? 'Applying Import...' : 'Confirm & Apply Bulk Import'}
           </button>
         </div>

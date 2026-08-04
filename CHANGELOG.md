@@ -6,6 +6,36 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-08-04
+
+### Fixed — WebUI bridge release blocker (on-device, POCO F6)
+- **Static kernelsu import**: the official `kernelsu@3.0.2` npm package is now
+  a pinned dependency and `import { exec } from 'kernelsu'` is BUNDLED by
+  Vite. The previous `import(/* @vite-ignore */ 'kernelsu')` left a bare
+  module specifier that the installed WebView could not resolve — every
+  screen reported "No exec bridge available" while the same mtbctl binary
+  worked from Termux.
+- **Bridge adapters by documented surface**: `window.kernelsu.exec` shim
+  (alternate hosts / WebUI X) first, then the bundled kernelsu package
+  (KernelSU/ReSukiSU manager `ksu` global). No guessed globals. The selected
+  bridge is reported in the UI.
+- **Bridge self-test**: `mtbctl probe` is executed through the bridge on
+  startup; `ready` requires valid JSON + mtbctl_version. Debug panel shows
+  bridge kind, self-test errno, stderr summary and mtbctl path/version.
+- **Fail-safe gating**: while the bridge is unavailable or probe failed —
+  Restart Modem, bandlock apply, feature disable/restore, NV write/delete,
+  import apply and backup restore are ALL disabled; Cell polling stops;
+  one clear banner is shown; read-only navigation stays available.
+- **CI bundle inspection**: built JS must contain the bundled bridge
+  (`ksu.exec`), must NOT contain `import("kernelsu")` or bare
+  `from"kernelsu"` specifiers.
+- **Read-only backup.create / backup.verify** (backend + UI): manual NV
+  snapshot without writing, and integrity + live re-read verification of any
+  backup — safe pre-write tooling for the device staircase.
+- Browser-verified fail-closed behavior (no device): all mutation controls
+  disabled, diagnostics shown. On-device WebUI probe still pending.
+- Writes/restores remain GATED.
+
 ## [1.0.8] - 2026-08-04
 
 ### Fixed — read-only device results (POCO F6/peridot round 2)

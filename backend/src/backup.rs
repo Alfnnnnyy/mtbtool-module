@@ -394,3 +394,85 @@ pub fn restore_backup(id: &str) -> Result<Value, String> {
     }))
 }
 
+
+/// Read-only manual snapshot: reads the CURRENT bytes of the given NV paths
+/// (no writes) and stores them as a backup manifest. Used for pre-write
+/// safety snapshots and read-only backup testing.
+pub fn create_manual_backup(
+    paths: &[String],
+    slot: i32,
+    reason: &str,
+) -> Result<Backup, String> {
+    validate_slot(slot)?;
+    if paths.is_empty() {
+        return Err("no paths provided for backup create".to_string());
+    }
+    let _lock = crate::mtb::FileLock::acquire().map_err(|e| e.to_string())?;
+
+    let mut entries = Vec::new();
+    for p in paths {
+        validate_nv_path(p)?;
+        let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), p]);
+        match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => entries.push(BackupEntry::new(slot, p.clone(), Some(bytes_to_hex(&b)))),
+            EfsRead::Absent => entries.push(BackupEntry::new(slot, p.clone(), None)),
+            EfsRead::Error(e) => {
+                return Err(format!("read failed for {} before backup: {}", p, e));
+            }
+        }
+    }
+    create_backup(reason, entries)
+}
+
+/// Read-only verification of a backup: manifest integrity (version, path
+/// allowlist, size, checksum) PLUS a live re-read comparison against the
+/// modem. Never writes.
+pub fn verify_backup(id: &str) -> Result<Value, String> {
+    let _lock = crate::mtb::FileLock::acquire().map_err(|e| e.to_string())?;
+    let backup = get_backup(id)?;
+    if backup.version != BACKUP_VERSION {
+        return Err(format!(
+            "Unsupported backup version {} (expected {})",
+            backup.version, BACKUP_VERSION
+        ));
+    }
+
+    let mut entries = Vec::new();
+    let mut all_ok = true;
+    for entry in &backup.entries {
+        validate_slot(entry.slot)?;
+        if let Err(e) = entry.verify_integrity() {
+            all_ok = false;
+            entries.push(json!({
+                "path": entry.path,
+                "slot": entry.slot,
+                "integrity": false,
+                "error": e,
+                "matches_current": false
+            }));
+            continue;
+        }
+        // live re-read (read-only) comparison
+        let (exit, raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
+        let matches_current = match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => entry.bytes.as_deref() == Some(bytes_to_hex(&b).as_str()),
+            EfsRead::Absent => entry.bytes.is_none(),
+            EfsRead::Error(_) => false,
+        };
+        if !matches_current {
+            all_ok = false;
+        }
+        entries.push(json!({
+            "path": entry.path,
+            "slot": entry.slot,
+            "integrity": true,
+            "matches_current": matches_current
+        }));
+    }
+
+    Ok(json!({
+        "ok": all_ok,
+        "id": backup.id,
+        "entries": entries
+    }))
+}

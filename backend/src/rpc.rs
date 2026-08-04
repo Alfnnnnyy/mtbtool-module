@@ -9,7 +9,7 @@
 
 use serde_json::{json, Value};
 
-use crate::backup::{list_backups, restore_backup};
+use crate::backup::{create_manual_backup, list_backups, restore_backup, verify_backup};
 use crate::bandlock::{detect_bandlock, get_bandlock, set_bandlock};
 use crate::cells::get_cells;
 use crate::config::{get_config, set_config};
@@ -37,6 +37,8 @@ const ALLOWED_METHODS: &[&str] = &[
     "import.preview",
     "import.apply",
     "backup.list",
+    "backup.create",
+    "backup.verify",
     "backup.restore",
     "config.get",
     "config.set",
@@ -193,6 +195,25 @@ pub fn dispatch(method: &str, params: &Value) -> Value {
             Ok(backups) => json!({ "ok": true, "backups": backups }),
             Err(e) => json!({ "ok": false, "error": e }),
         },
+        "backup create" => {
+            let paths: Vec<String> = params
+                .get("paths")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let reason = str_arg("reason").unwrap_or("manual");
+            match create_manual_backup(&paths, slot, reason) {
+                Ok(b) => json!({ "ok": true, "backup": b }),
+                Err(e) => json!({ "ok": false, "error": e }),
+            }
+        }
+        "backup verify" => {
+            let id = str_arg("id").unwrap_or("latest");
+            match verify_backup(id) {
+                Ok(res) => res,
+                Err(e) => json!({ "ok": false, "error": e }),
+            }
+        }
         "backup restore" => {
             let id = str_arg("id")
                 .or_else(|| parts.get(2).copied())

@@ -267,6 +267,28 @@ fn parse_backup_cmd(args: &[String]) -> Value {
             let id = args.get(1).map(|s| s.as_str()).unwrap_or("latest");
             rpc::dispatch("backup restore", &json!({ "id": id }))
         }
+        "create" => {
+            let (slot, rem) = parse_slot(&args[1..]);
+            let mut paths: Vec<String> = Vec::new();
+            let mut reason = "manual".to_string();
+            let mut i = 0;
+            while i < rem.len() {
+                if rem[i] == "--paths" && i + 1 < rem.len() {
+                    paths = rem[i + 1].split(',').map(String::from).collect();
+                    i += 2;
+                } else if rem[i] == "--reason" && i + 1 < rem.len() {
+                    reason = rem[i + 1].clone();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            rpc::dispatch("backup create", &json!({ "paths": paths, "slot": slot, "reason": reason }))
+        }
+        "verify" => {
+            let id = args.get(1).map(|s| s.as_str()).unwrap_or("latest");
+            rpc::dispatch("backup verify", &json!({ "id": id }))
+        }
         _ => json!({ "ok": false, "error": format!("Unknown backup subcommand: {}", sub) }),
     }
 }

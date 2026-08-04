@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "lucide-svelte": "0.474.0",
-    "svelte": "5.19.7"
+    "svelte": "5.19.7",
+    "kernelsu": "3.0.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "5.0.3",

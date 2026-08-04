@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rpc } from '../bridge';
+  import { rpc, bridgeStatus } from '../bridge';
   import { Archive, RefreshCw, AlertTriangle, RotateCcw } from 'lucide-svelte';
 
   interface BackupEntry {
@@ -46,6 +46,9 @@
   let backups = $state<BackupItem[]>([]);
   let statusMsg = $state<string | null>(null);
   let restoringId = $state<string | null>(null);
+  let creatingSnapshot = $state(false);
+  let verifyingId = $state<string | null>(null);
+  let verifyResult = $state<string | null>(null);
 
   // Emergency Modal Confirm
   let showEmergencyModal = $state(false);
@@ -63,6 +66,52 @@
       statusMsg = `Failed to load backups: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       loading = false;
+    }
+  }
+
+  // Read-only snapshot: captures current NV bytes WITHOUT writing anything.
+  const SNAPSHOT_PATHS = [
+    '/nv/item_files/modem/mmode/lte_bandpref',
+    '/nv/item_files/modem/mmode/lte_bandpref_extn_65_256',
+    '/nv/item_files/modem/mmode/nr_nsa_band_pref',
+    '/nv/item_files/modem/mmode/nr_band_pref',
+  ];
+
+  async function handleCreateSnapshot() {
+    creatingSnapshot = true;
+    statusMsg = null;
+    try {
+      const res = await rpc('backup.create', { paths: SNAPSHOT_PATHS, slot: 0, reason: 'manual_snapshot' }) as { ok: boolean; error?: string; backup?: BackupItem };
+      statusMsg = res?.ok && res.backup
+        ? `Snapshot created (read-only): ${res.backup.id}`
+        : `Snapshot failed: ${res?.error || 'unknown'}`;
+      await loadBackups();
+    } catch (e: unknown) {
+      statusMsg = `Snapshot error: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      creatingSnapshot = false;
+    }
+  }
+
+  async function handleVerify(id: string) {
+    verifyingId = id;
+    verifyResult = null;
+    statusMsg = null;
+    try {
+      const res = await rpc('backup.verify', { id }) as {
+        ok: boolean;
+        id?: string;
+        entries?: Array<{ path: string; integrity: boolean; matches_current: boolean }>;
+      };
+      const entries = res?.entries || [];
+      const allMatch = res?.ok === true && entries.every((e) => e.integrity && e.matches_current);
+      verifyResult = allMatch
+        ? `Verify OK: ${entries.length}/${entries.length} entries match current modem state.`
+        : `Verify FAILED: ${entries.filter((e) => !e.integrity || !e.matches_current).length}/${entries.length} entries mismatch.`;
+    } catch (e: unknown) {
+      verifyResult = `Verify error: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      verifyingId = null;
     }
   }
 
@@ -134,6 +183,22 @@
     <div class="card status-info-card">{statusMsg}</div>
   {/if}
 
+  <!-- Read-only snapshot & verify (safe without modem writes) -->
+  <div class="card" style="display: flex; justify-content: space-between; align-items: center; gap: 10px;">
+    <div>
+      <div class="section-label">READ-ONLY SNAPSHOT</div>
+      <p class="caption" style="margin-top: 2px;">
+        Capture current NV bytes (4 bandlock paths) without writing — then verify any backup against the live modem.
+      </p>
+    </div>
+    <button class="btn btn-secondary" onclick={handleCreateSnapshot} disabled={creatingSnapshot || !$bridgeStatus.ready}>
+      {creatingSnapshot ? 'Capturing...' : 'Create Snapshot'}
+    </button>
+  </div>
+  {#if verifyResult}
+    <div class="card status-info-card">{verifyResult}</div>
+  {/if}
+
   <!-- Backup List -->
   <div class="section-label">RECORDED EFS BACKUP SNAPSHOTS ({backups.length})</div>
   {#if backups.length === 0 && loading}
@@ -154,13 +219,18 @@
               ID: {item.id} | Timestamp: {new Date(item.time * 1000).toLocaleString()}
             </div>
           </div>
-          <button
-            class="btn btn-secondary"
-            onclick={() => handleRestore(item.id)}
-            disabled={restoringId === item.id}
-          >
-            <RotateCcw size={16} /> {restoringId === item.id ? 'Restoring...' : 'Restore'}
-          </button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" onclick={() => handleVerify(item.id)} disabled={verifyingId === item.id}>
+              {verifyingId === item.id ? 'Verifying...' : 'Verify'}
+            </button>
+            <button
+              class="btn btn-secondary"
+              onclick={() => handleRestore(item.id)}
+              disabled={restoringId === item.id || !$bridgeStatus.ready}
+            >
+              <RotateCcw size={16} /> {restoringId === item.id ? 'Restoring...' : 'Restore'}
+            </button>
+          </div>
         </div>
       {/each}
     </div>
@@ -177,7 +247,7 @@
         </p>
       </div>
     </div>
-    <button class="btn btn-danger" onclick={() => showEmergencyModal = true}>
+    <button class="btn btn-danger" onclick={() => showEmergencyModal = true} disabled={!$bridgeStatus.ready}>
       Restore Latest Backup Now
     </button>
   </div>

@@ -77,9 +77,12 @@ does not ship it, the module refuses to install (customize.sh check).
 2. Install via your root manager (KernelSU Manager → modules → install from
    storage, or Magisk → modules → install from storage).
 3. Open the module's **WebUI**:
-   - KernelSU/ReSukiSU/APatch: native module WebUI button.
-   - Magisk: use a WebUI host that provides a controlled exec bridge
-     (e.g. **WebUI X**). Terminal users can run the module's action script.
+   - KernelSU/ReSukiSU/APatch: native module WebUI button — the official
+     `kernelsu` bridge package is bundled with the WebUI.
+   - Magisk: use a WebUI host that exposes a kernelsu-compatible exec bridge
+     (e.g. **WebUI X**). The bridge adapter is detected at startup and shown
+     in the Dashboard diagnostics panel; all mutation controls fail closed
+     until the bridge self-test (`mtbctl probe`) succeeds.
 4. Dashboard shows the compatibility probe; if `/vendor/bin/mtb` is missing
    the module refuses to install in the first place.
 

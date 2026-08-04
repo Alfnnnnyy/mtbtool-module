@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { rpc } from '../bridge';
+  import { rpc, bridgeStatus, MTBCTL_PATH } from '../bridge';
   import { ShieldAlert, RefreshCw, Archive, Cpu, Smartphone, Folder, Activity, Radio, Sliders, Search, Zap } from 'lucide-svelte';
 
 interface ProbeResult {
@@ -93,6 +93,18 @@ interface ProbeResult {
     </div>
   </div>
 
+  <div class="card" style="margin-top: 12px;">
+    <div class="section-label">BRIDGE DIAGNOSTICS</div>
+    <div class="caption mono" style="display: grid; gap: 4px; margin-top: 6px;">
+      <span>bridge: {$bridgeStatus.detected}</span>
+      <span>self-test: {$bridgeStatus.selfTest.ran ? ($bridgeStatus.selfTest.ok ? 'OK' : `FAILED errno=${$bridgeStatus.selfTest.errno}`) : 'not run'}</span>
+      {#if $bridgeStatus.selfTest.stderr}
+        <span style="color: var(--warning);">stderr: {$bridgeStatus.selfTest.stderr.slice(0, 160)}</span>
+      {/if}
+      <span>mtbctl: <span class="mono">{MTBCTL_PATH}</span> v{$bridgeStatus.selfTest.version || '?'}</span>
+    </div>
+  </div>
+
   {#if error}
     <div class="card status-err-card">
       <p style="color: var(--danger);">Failed to probe device: {error}</p>
@@ -175,7 +187,7 @@ interface ProbeResult {
 
   <div class="section-label">QUICK ACTIONS</div>
   <div class="card action-card-bar">
-    <button class="btn btn-primary" onclick={handleModemRestart} disabled={restartingModem}>
+    <button class="btn btn-primary" onclick={handleModemRestart} disabled={restartingModem || !$bridgeStatus.ready}>
       <RefreshCw size={16} class={restartingModem ? 'spin' : ''} /> Restart Modem
     </button>
     <button class="btn btn-secondary" onclick={() => onNavigate('backups')}>

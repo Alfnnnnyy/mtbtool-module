@@ -126,6 +126,18 @@ check "nv.read qmi -> absent null not true" "echo '$out' | grep -q '\"absent\":n
 out=$(FAKE_MTB_QMI_FAIL=1 "$BIN" nv read /nv/item_files/modem/mmode/nr_nsa_band_pref --slot 0 || true)
 check "qmi fail exit0 -> error not absent" "echo '$out' | grep -q 'qmi read failure'"
 
+# --- read-only backup.create / backup.verify ---
+out=$("$BIN" backup create --paths /nv/item_files/modem/mmode/lte_bandpref,/nv/item_files/modem/mmode/nr_band_pref --slot 0 --reason smoke_snapshot)
+check "backup create read-only snapshot" "echo '$out' | grep -q '\"ok\":true'"
+vid=$(echo "$out" | python3 -c "import json,sys; print(json.load(sys.stdin)['backup']['id'])")
+out=$("$BIN" backup verify "$vid")
+check "backup verify matches" "echo '$out' | grep -q '\"ok\":true'"
+# tamper the fake store for lte_bandpref, verify must now fail closed
+FAKE_STORE_KEY=$(echo '0|/nv/item_files/modem/mmode/lte_bandpref' | tr '/' '_')
+printf '00' > "$WORK/store/$FAKE_STORE_KEY"
+out=$("$BIN" backup verify "$vid" || true)
+check "backup verify detects tamper" "echo '$out' | grep -q '\"ok\":false'"
+
 # --- RPC bridge (mtbctl rpc --b64) ---
 p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)
 out=$("$BIN" rpc --b64 "$p")

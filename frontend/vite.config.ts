@@ -13,10 +13,7 @@ export default defineConfig({
   build: {
     outDir: '../webroot',
     emptyOutDir: true,
-    target: 'es2020',
-    rollupOptions: {
-      external: ['kernelsu']
-    }
+    target: 'es2020'
   },
   test: {
     environment: 'node',
