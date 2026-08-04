@@ -6,6 +6,24 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-08-04
+
+### Fixed
+- **Deterministic "newest backup" ordering** (audit): `backup_order_key()`
+  parses the full `<millis>_<nanos>_<pid>_<counter>_<reason>` id — the
+  previous parser split on `_` but failed to parse nanos (`splitn(2)` left a
+  mixed segment), so same-millisecond backups fell back to read_dir order.
+  The key is now used everywhere "newest" matters: `backup restore latest`,
+  `list_backups()` ordering, feature-restore manifest selection and the
+  Backups WebUI order.
+- **Regression tests**: handcrafted same-second/same-millis manifests
+  created in reversed order prove counter-2 wins regardless of filesystem
+  order; full-segment parser unit tests.
+- CI `--test-threads=1` and `workflow_dispatch` now ship IN the release tag
+  (previously only on HEAD after the tag).
+- README: "HTTP bridge" wording replaced with "RPC bridge"; roadmap port
+  entry removed.
+
 ## [1.0.5] - 2026-08-04
 
 ### Fixed

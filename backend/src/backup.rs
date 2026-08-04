@@ -13,6 +13,22 @@ use crate::util::{
 
 pub const BACKUP_VERSION: u32 = 2;
 
+/// Deterministic ordering key parsed from a backup id
+/// (`<millis>_<nanos>_<pid>_<counter>_<reason>`). Used wherever "newest
+/// backup" matters: get_backup("latest"), list_backups() ordering and
+/// feature-restore manifest selection. Tuple comparison is total — ties in
+/// millis are broken by nanos, then counter, then pid — so selection never
+/// depends on read_dir order.
+pub fn backup_order_key(id: &str) -> Option<(u64, u64, u64, u32)> {
+    let mut it = id.split('_');
+    let millis = it.next()?.parse().ok()?;
+    let nanos = it.next()?.parse().ok()?;
+    let pid = it.next()?.parse().ok()?;
+    let counter = it.next()?.parse().ok()?;
+    Some((millis, nanos, counter, pid))
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupEntry {
     pub slot: i32,
@@ -189,7 +205,8 @@ pub fn list_backups() -> Result<Vec<Value>, String> {
                         if let Some(obj) = val.as_object_mut() {
                             obj.insert("size".to_string(), serde_json::json!(metadata.len()));
                         }
-                        list.push((backup.time, val));
+                        let key = backup_order_key(&backup.id).unwrap_or((0, 0, 0, 0));
+                        list.push((key, val));
                     }
                 }
             }
@@ -212,7 +229,7 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
         // Resolve the newest manifest. `time` is second-precision and several
         // backups can share a second, so ties are broken by the millis/nanos
         // embedded in the id prefix (<millis>_<nanos>_<pid>_<counter>_<reason>).
-        let mut newest: Option<(u64, u64, std::path::PathBuf)> = None;
+        let mut newest: Option<((u64, u64, u64, u32), std::path::PathBuf)> = None;
         if let Ok(rd) = fs::read_dir(&backups_dir) {
             for entry in rd.flatten() {
                 let p = entry.path();
@@ -224,22 +241,21 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
                 }
                 if let Ok(content) = fs::read_to_string(&p) {
                     if let Ok(b) = serde_json::from_str::<Backup>(&content) {
-                        let mut parts = b.id.splitn(2, '_');
-                        let millis = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-                        let nanos = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-                        let better = match &newest {
-                            Some((m, n, _)) => millis > *m || (millis == *m && nanos > *n),
-                            None => true,
-                        };
-                        if better {
-                            newest = Some((millis, nanos, p));
+                        if let Some(key) = backup_order_key(&b.id) {
+                            let better = match &newest {
+                                Some((k, _)) => key > *k,
+                                None => true,
+                            };
+                            if better {
+                                newest = Some((key, p));
+                            }
                         }
                     }
                 }
             }
         }
         match newest {
-            Some((_, _, p)) => p,
+            Some((_, p)) => p,
             None => return Err("No backups found".to_string()),
         }
     } else if id.ends_with(".json") {

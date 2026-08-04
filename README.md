@@ -87,8 +87,7 @@ does not ship it, the module refuses to install (customize.sh check).
   protocol-faithful simulation of `/vendor/bin/mtb` (one tagged byte per line,
   `ASDIV DATA:`/`TX INFO:` cell lines, `rsp data:` DIAG payloads, absent-item =
   exit 0 + empty, exactly as the original app's parsers expect).
-- **Debian ≠ Android.** The harness verifies logic, wire formats and the HTTP
-  bridge — not the device. On-phone differences (toybox vs GNU tools, `getprop`,
+- **Debian ≠ Android.** The harness verifies logic, wire formats and the RPC bridge (RPC) — not the device. On-phone differences (toybox vs GNU tools, `getprop`,
   real mtb output quirks per ROM) are handled defensively in code: empty/odd
   output → item treated as absent, `getprop` failure → `unknown`, paths and
   slots re-validated at the backend. Always test on your device before trusting
@@ -142,7 +141,7 @@ flowchart LR
 - [x] v1.0.0 — full feature parity port (band lock, features, NV/import, cells, backups)
 - [ ] Playwright E2E for WebUI flows
 - [ ] Cell history logging
-- [ ] Module settings (port, theme, poll interval)
+- [ ] Module settings (theme, poll interval)
 
 ## Status & device validation
 

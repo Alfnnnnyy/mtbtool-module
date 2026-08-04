@@ -537,3 +537,52 @@ fn test_latest_resolves_newest_not_arbitrary() {
 
     let _ = fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_backup_order_key_parses_all_segments() {
+    use mtbctl::backup::backup_order_key;
+    // The regression: splitn(2, '_') made nanos unparseable ("456..._1234_2_...").
+    let key = backup_order_key("1754273400123_456789123_1234_2_bandlock_set")
+        .expect("full key parses");
+    assert_eq!(key, (1754273400123, 456789123, 2, 1234));
+    assert!(backup_order_key("bogus").is_none());
+    assert!(backup_order_key("1_2_x_4_r").is_none());
+}
+
+#[test]
+fn test_latest_and_list_use_full_key_same_millis() {
+    use mtbctl::backup::{get_backup, list_backups};
+    let tmp_dir = std::env::temp_dir().join(format!("mtbtest_key_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    env::set_var("MTBTOOL_DIR", tmp_dir.to_str().unwrap());
+    let backups_dir = tmp_dir.join("backups");
+    fs::create_dir_all(&backups_dir).unwrap();
+
+    // Handcrafted manifests: identical second (time=1000), same millis where
+    // applicable; created in REVERSED order so read_dir sees counter 2 first.
+    let mk = |id: &str| format!(
+        r#"{{"version":2,"id":"{}","time":1000,"reason":"feature_disable_dss","device":"x","createdAt":"x","entries":[{{"slot":0,"path":"/nv/item_files/modem/nr5g/RRC/cap_dss_control","bytes":"0000","size":2,"sha256":"{}"}}]}}"#,
+        id,
+        "00".repeat(32)
+    );
+    let ids = [
+        "1000_200_7_2_feature_disable_dss",
+        "1000_200_7_1_feature_disable_dss",
+        "1000_100_7_0_feature_disable_dss",
+    ];
+    for id in ids {
+        fs::write(backups_dir.join(format!("{}.json", id)), mk(id)).unwrap();
+    }
+
+    let latest = get_backup("latest").expect("latest resolves");
+    assert_eq!(latest.id, "1000_200_7_2_feature_disable_dss",
+        "same-millis newest must win regardless of read_dir order");
+
+    let list = list_backups().expect("list");
+    let order: Vec<&str> = list.iter()
+        .map(|v| v["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(order, ids, "list_backups must sort by full key desc");
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}
