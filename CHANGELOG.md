@@ -6,6 +6,33 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-08-04
+
+### Fixed — audit round: restore deadlock, peridot snapshot, stale delete, NR messaging
+- **backup.verify semantics** (restore deadlock): verification of a valid
+  backup that DIFFERS from the modem is now a SUCCESS (`ok:true`,
+  `integrity_ok:true`, `all_match:false`) — mismatch is the reason restore
+  exists. `ok:false` only when a live pre-read fails; `integrity_ok` only for
+  checksum/path/version problems. The restore review dialog opens on any
+  verified backup, highlights differing entries as restore targets, and
+  disables restore only for integrity/read failures.
+- **Peridot snapshot preset**: `nr_nsa_band_pref` (exit-0 QMI failure on
+  POCO F6/peridot) removed from the default snapshot — it now snapshots the
+  3 working bandlock paths; failed paths are never silently skipped.
+- **NV Delete stale-target**: the read result is bound to the exact
+  path+slot that produced it (`readTarget`); changing base/subpath/slot
+  clears it, Review Delete only arms when the target matches the current
+  inputs, the dialog freezes the reviewed target, and the delete re-reads
+  the frozen target immediately before executing — aborting with a
+  changed-state warning if the bytes differ from review.
+- **NR mode messaging**: apply failures now distinguish "write attempted"
+  (verification/rollback/backup details from the payload) from "nothing
+  written" (read-before-write / backup failure); the current mode is always
+  re-read live after success or failure instead of assuming the target.
+- Cleanup: last `latest.json` wording removed; dead emergency-restore code
+  deleted. Smoke: verify-mismatch + integrity-tamper checks updated to the
+  new contract.
+
 ## [1.0.10] - 2026-08-04
 
 ### Fixed — safety-critical UX (on-device review, 4 release blockers)

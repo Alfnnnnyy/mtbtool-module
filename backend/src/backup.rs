@@ -450,40 +450,61 @@ pub fn verify_backup(id: &str) -> Result<Value, String> {
     }
 
     let mut entries = Vec::new();
-    let mut all_ok = true;
+    let mut integrity_ok = true;
+    let mut all_match = true;
+    let mut ok = true;
+
     for entry in &backup.entries {
-        validate_slot(entry.slot)?;
+        let mut entry_json = json!({
+            "path": entry.path,
+            "slot": entry.slot,
+            "integrity": true,
+            "matches_current": false,
+        });
+        if let Err(e) = validate_slot(entry.slot) {
+            integrity_ok = false;
+            ok = false;
+            entry_json["integrity"] = json!(false);
+            entry_json["error"] = json!(e);
+            entries.push(entry_json);
+            continue;
+        }
         if let Err(e) = entry.verify_integrity() {
-            all_ok = false;
-            entries.push(json!({
-                "path": entry.path,
-                "slot": entry.slot,
-                "integrity": false,
-                "error": e,
-                "matches_current": false
-            }));
+            integrity_ok = false;
+            entry_json["integrity"] = json!(false);
+            entry_json["error"] = json!(e);
+            entries.push(entry_json);
             continue;
         }
         // live re-read (read-only) comparison
         let (exit, raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
-        let matches_current = match parse_efs_read_output(exit, &raw) {
-            EfsRead::Present(b) => entry.bytes.as_deref() == Some(bytes_to_hex(&b).as_str()),
-            EfsRead::Absent => entry.bytes.is_none(),
-            EfsRead::Error(_) => false,
-        };
-        if !matches_current {
-            all_ok = false;
+        match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => {
+                let matches = entry.bytes.as_deref() == Some(bytes_to_hex(&b).as_str());
+                entry_json["matches_current"] = json!(matches);
+                if !matches {
+                    all_match = false;
+                }
+            }
+            EfsRead::Absent => {
+                let matches = entry.bytes.is_none();
+                entry_json["matches_current"] = json!(matches);
+                if !matches {
+                    all_match = false;
+                }
+            }
+            EfsRead::Error(e) => {
+                ok = false;
+                entry_json["read_error"] = json!(e);
+            }
         }
-        entries.push(json!({
-            "path": entry.path,
-            "slot": entry.slot,
-            "integrity": true,
-            "matches_current": matches_current
-        }));
+        entries.push(entry_json);
     }
 
     Ok(json!({
-        "ok": all_ok,
+        "ok": ok,
+        "integrity_ok": integrity_ok,
+        "all_match": all_match,
         "id": backup.id,
         "entries": entries
     }))

@@ -50,7 +50,7 @@
   let verifyResult = $state<string | null>(null);
 
   // Emergency Modal Confirm
-  let restoreReview = $state<{ id: string; isEmergency: boolean; verify: { ok: boolean; entries: Array<{ path: string; integrity: boolean; matches_current: boolean }> } } | null>(null);
+  let restoreReview = $state<{ id: string; isEmergency: boolean; verify: { ok: boolean; integrity_ok: boolean; all_match: boolean; entries: Array<{ path: string; integrity: boolean; matches_current: boolean; read_error?: string }> } } | null>(null);
   let restoreConfirmText = $state('');
   let restoringId = $state<string | null>(null);
 
@@ -70,10 +70,12 @@
   }
 
   // Read-only snapshot: captures current NV bytes WITHOUT writing anything.
+  // peridot-safe preset: nr_nsa_band_pref returns an exit-0 QMI failure on
+  // POCO F6/peridot, so it is EXCLUDED from the default snapshot (the
+  // backend never silently skips a requested path).
   const SNAPSHOT_PATHS = [
     '/nv/item_files/modem/mmode/lte_bandpref',
     '/nv/item_files/modem/mmode/lte_bandpref_extn_65_256',
-    '/nv/item_files/modem/mmode/nr_nsa_band_pref',
     '/nv/item_files/modem/mmode/nr_band_pref',
   ];
 
@@ -118,8 +120,22 @@
   async function openRestoreReview(id: string, isEmergency = false) {
     statusMsg = null;
     try {
-      const res = await rpc('backup.verify', { id }) as { ok: boolean; id?: string; entries?: Array<{ path: string; integrity: boolean; matches_current: boolean }> };
-      restoreReview = { id, isEmergency, verify: { ok: !!res?.ok, entries: res?.entries || [] } };
+      const res = await rpc('backup.verify', { id }) as {
+        ok: boolean; integrity_ok?: boolean; all_match?: boolean; id?: string;
+        entries?: Array<{ path: string; integrity: boolean; matches_current: boolean; read_error?: string }>;
+      };
+      // A valid backup that differs from the modem (all_match:false) is the
+      // REASON restore exists — the review dialog must open. It stays
+      // disabled only for integrity problems or live pre-read failures.
+      restoreReview = {
+        id, isEmergency,
+        verify: {
+          ok: !!res?.ok,
+          integrity_ok: res?.integrity_ok !== false,
+          all_match: res?.all_match === true,
+          entries: res?.entries || [],
+        },
+      };
       restoreConfirmText = '';
     } catch (e: unknown) {
       statusMsg = `Cannot verify backup before restore: ${e instanceof Error ? e.message : String(e)}`;
@@ -156,27 +172,6 @@
     }
   }
 
-  async function handleEmergencyRestore() {
-    restoringId = 'latest';
-    statusMsg = null;
-    try {
-      const res = await rpc('backup.restore', { id: 'latest' }) as RestoreResult;
-      const restoredList = res?.restored || [];
-      const allOkAndVerified = res && res.ok && restoredList.length > 0 && restoredList.every(r => r.ok && r.verified === true);
-      if (allOkAndVerified) {
-        statusMsg = 'EMERGENCY RESTORE COMPLETE: latest backup rewritten and verified on modem!';
-      } else {
-        let msg = res?.error || 'Emergency restore failed (partial restore or verification error)';
-        if (res?.rollback) msg += ' (rolled back)';
-        statusMsg = msg;
-        await loadBackups();
-      }
-    } catch (e: unknown) {
-      statusMsg = `Emergency restore error: ${e instanceof Error ? e.message : String(e)}`;
-    } finally {
-      restoringId = null;
-    }
-  }
 
   $effect(() => {
     loadBackups();
@@ -204,7 +199,7 @@
     <div>
       <div class="section-label">READ-ONLY SNAPSHOT</div>
       <p class="caption" style="margin-top: 2px;">
-        Capture current NV bytes (4 bandlock paths) without writing — then verify any backup against the live modem.
+        Capture current NV bytes (3 bandlock paths; NR NSA excluded — unsupported on this firmware) without writing — then verify any backup against the live modem.
       </p>
     </div>
     <button class="btn btn-secondary" onclick={handleCreateSnapshot} disabled={creatingSnapshot || !$bridgeStatus.ready}>
@@ -259,7 +254,7 @@
       <div>
         <strong style="color: var(--danger); font-size: 16px;">EMERGENCY MODEM RESTORE</strong>
         <p class="caption" style="margin-top: 2px;">
-          Instantly rewrites <code>latest.json</code> backup payload directly to modem EFS NV storage.
+          Verifies then restores the newest backup manifest (resolved dynamically from the backups folder).
         </p>
       </div>
     </div>
@@ -279,11 +274,19 @@
           <p class="caption" style="display: grid; gap: 4px;">
             <span>Backup ID: <span class="mono">{review.id}</span></span>
             <span>{review.verify.entries.length} entr(ies)</span>
+            {#if !review.verify.all_match}
+              <span style="color: var(--warning);">
+                {review.verify.entries.filter((e) => e.integrity && !e.matches_current).length} entr(ies) differ from the current modem — that is the expected reason to restore.
+              </span>
+            {/if}
+            {#if !review.verify.ok}
+              <span style="color: var(--danger);">Live modem pre-read failed — restore is disabled until the modem can be read.</span>
+            {/if}
           </p>
           <div class="mono caption" style="margin-top: 6px; display: grid; gap: 2px; max-height: 160px; overflow: auto;">
             {#each review.verify.entries as e}
-              <span style="color: {e.integrity && e.matches_current ? 'var(--success)' : 'var(--danger)'};">
-                {e.path.split('/').pop()} — {e.integrity ? 'intact' : 'BAD'} / {e.matches_current ? 'matches current' : 'MISMATCHES current'}
+              <span style="color: {e.integrity && e.matches_current ? 'var(--success)' : (e.read_error ? 'var(--danger)' : 'var(--warning)')};">
+                {e.path.split('/').pop()} — {e.read_error ? 'READ ERROR' : (e.integrity ? 'intact' : 'BAD')} / {e.matches_current ? 'matches current' : (e.read_error ? 'unreadable' : 'differs (restore target)')}
               </span>
             {/each}
           </div>
@@ -298,7 +301,7 @@
           <button
             class="btn btn-warning"
             onclick={() => handleRestore(review.id)}
-            disabled={restoreConfirmText !== 'RESTORE' || !review.verify.ok}
+            disabled={restoreConfirmText !== 'RESTORE' || !review.verify.ok || !review.verify.integrity_ok}
           >
             Restore Backup
           </button>

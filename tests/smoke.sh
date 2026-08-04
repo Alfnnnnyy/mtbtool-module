@@ -135,8 +135,24 @@ check "backup verify matches" "echo '$out' | grep -q '\"ok\":true'"
 # tamper the fake store for lte_bandpref, verify must now fail closed
 FAKE_STORE_KEY=$(echo '0|/nv/item_files/modem/mmode/lte_bandpref' | tr '/' '_')
 printf '00' > "$WORK/store/$FAKE_STORE_KEY"
+out=$("$BIN" backup verify "$vid")
+check "verify ok despite mismatch (semantic deadlock fix)" "echo '$out' | grep -q '\"ok\":true'"
+check "verify reports all_match false" "echo '$out' | grep -q '\"all_match\":false'"
+check "verify integrity still ok" "echo '$out' | grep -q '\"integrity_ok\":true'"
+# integrity tamper (bad sha256) must fail integrity_ok
+python3 - "$WORK" <<'PYEOF'
+import json, glob, sys
+root = sys.argv[1]
+for f in glob.glob(root + '/data/backups/*.json'):
+    if 'latest.json' in f:
+        continue
+    d = json.load(open(f))
+    d['entries'][0]['sha256'] = '00' * 32
+    json.dump(d, open(f, 'w'))
+    break
+PYEOF
 out=$("$BIN" backup verify "$vid" || true)
-check "backup verify detects tamper" "echo '$out' | grep -q '\"ok\":false'"
+check "verify integrity tamper -> integrity_ok false" "echo '$out' | grep -q '\"integrity_ok\":false'"
 
 # --- RPC bridge (mtbctl rpc --b64) ---
 p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)

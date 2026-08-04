@@ -1,6 +1,6 @@
 id=mtbtool
 name=MTB Tool
-version=v1.0.10
-versionCode=11
+version=v1.0.11
+versionCode=12
 author=Alfnnnnyy
 description=EFS NV manager for Xiaomi Qualcomm modems (MTB Tool port). Svelte WebUI + Rust mtbctl. Needs /vendor/bin/mtb.

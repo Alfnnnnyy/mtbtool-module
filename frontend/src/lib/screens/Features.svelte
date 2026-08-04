@@ -129,18 +129,40 @@
     nrModeMsg = null;
     try {
       const hexVal = target.toString(16).padStart(2, '0');
-      const res = await rpc('nv.write', { path: NR_MODE_PATH, hex: hexVal, slot, reason: 'NR mode set' }) as { ok: boolean; verified?: boolean };
-      nrMode = target;
+      const res = await rpc('nv.write', { path: NR_MODE_PATH, hex: hexVal, slot, reason: 'NR mode set' }) as {
+        ok: boolean; verified?: boolean; backup?: { id?: string }; rollback?: { attempted?: boolean; verified?: boolean };
+      };
       nrPending = null;
-      nrModeMsg = res && res.verified === false
-        ? 'NR mode written but read-back verification FAILED — check Backups'
-        : 'NR mode applied and verified — re-read matches target.';
+      if (res && res.ok && res.verified) {
+        nrModeMsg = 'NR mode applied and verified — re-reading to confirm...';
+      } else if (res && res.verified === false) {
+        nrModeMsg = `NR mode written but read-back verification FAILED (backup ${res.backup?.id || '?'}) — check Backups`;
+      }
     } catch (e: unknown) {
-      // revert the pending selection; current modem value stays untouched
       nrPending = null;
-      nrModeMsg = `Apply failed (nothing written): ${e instanceof Error ? e.message : String(e)}`;
+      const err = e instanceof Error ? e : null;
+      const payload = err instanceof ApiError ? err.payload as {
+        ok?: boolean; error?: string; backup?: { id?: string }; verified?: boolean;
+        rollback?: { attempted?: boolean; verified?: boolean };
+      } | undefined : undefined;
+      if (payload) {
+        const rb = payload.rollback;
+        if (payload.backup || payload.verified === false || rb) {
+          // the write WAS attempted — verification/rollback reporting
+          nrModeMsg = `Apply attempted: ${payload.error || 'verification failed'}` +
+            (rb ? ` — rollback attempted ${rb.attempted === true ? 'yes' : 'no'}, verified ${rb.verified === true ? 'yes' : 'NO'}` : '') +
+            (payload.backup ? ` (backup ${payload.backup.id})` : '');
+        } else {
+          // write never started (read-before-write / backup creation failure)
+          nrModeMsg = `Apply failed (nothing written): ${payload.error || (err ? err.message : 'unknown error')}`;
+        }
+      } else {
+        nrModeMsg = `Apply failed (nothing written): ${err ? err.message : String(e)}`;
+      }
     } finally {
+      // never assume the modem state: re-read live and reconcile nrMode
       nrModeLoading = false;
+      await readNrMode();
     }
   }
 

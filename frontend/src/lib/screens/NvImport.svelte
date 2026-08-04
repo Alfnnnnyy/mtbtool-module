@@ -70,6 +70,9 @@
   let readLoading = $state(false);
   let readResult = $state<ReadNvResult | null>(null);
   let readError = $state<string | null>(null);
+  // The exact path+slot that produced readResult — Review Delete is only
+  // armed when this still matches the CURRENT inputs (no stale-target deletes).
+  let readTarget = $state<{ path: string; slot: number } | null>(null);
 
   // Single NV write / delete state
   let writeHex = $state('');
@@ -94,6 +97,14 @@
     return selectedBase + subPath;
   }
 
+  $effect(() => {
+    // any change to the target inputs invalidates the read result
+    void selectedBase; void subPath; void slot;
+    readResult = null;
+    readTarget = null;
+    readError = null;
+  });
+
   async function handleReadNv() {
     readLoading = true;
     readResult = null;
@@ -102,6 +113,7 @@
       const path = fullPath();
       const res = await rpc('nv.read', { path, slot }) as ReadNvResult;
       readResult = res;
+      readTarget = { path, slot };
     } catch (e: unknown) {
       readError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -137,7 +149,9 @@
   }
 
   function reviewDeleteNv() {
-    // Prefill/current bytes must be shown; deletion is never one-tap.
+    // The reviewed target is FROZEN here; handleDeleteNv must use it, never
+    // recompute fullPath().
+    if (!readTarget) return;
     const current = readResult && !readResult.absent && readResult.bytes ? readResult.bytes : null;
     deleteCurrentBytes = current;
     deleteConfirmText = '';
@@ -150,16 +164,30 @@
   }
 
   async function handleDeleteNv() {
-    // two-step guard: dialog must be open and DELETE typed
-    if (!deleteReview || deleteConfirmText !== 'DELETE') return;
+    // two-step guard: dialog must be open and DELETE typed; target frozen
+    if (!deleteReview || deleteConfirmText !== 'DELETE' || !readTarget) return;
+    const target = { ...readTarget };
     deleteReview = false;
     deleteConfirmText = '';
     singleActionLoading = true;
     singleActionMsg = null;
     singleActionRollback = null;
     try {
-      const path = fullPath();
-      const res = await rpc('nv.delete', { path, slot, reason: 'Single NV delete' }) as { ok: boolean; verified?: boolean; error?: string; rollback?: RollbackInfo };
+      // re-read the FROZEN target right before deletion; abort if the
+      // current bytes differ from what the user reviewed.
+      let fresh: ReadNvResult | null = null;
+      try {
+        fresh = await rpc('nv.read', { path: target.path, slot: target.slot }) as ReadNvResult;
+      } catch { /* keep null */ }
+      const freshBytes = fresh && !fresh.absent && fresh.bytes ? fresh.bytes : null;
+      const reviewedBytes = deleteCurrentBytes || null;
+      if (freshBytes !== reviewedBytes) {
+        singleActionMsg = `ABORTED: ${target.path} changed since review (reviewed ${reviewedBytes ?? 'absent'}, now ${freshBytes ?? 'absent'}). Delete cancelled — review again.`;
+        return;
+      }
+      const path = target.path;
+      const slotT = target.slot;
+      const res = await rpc('nv.delete', { path, slot: slotT, reason: 'Single NV delete' }) as { ok: boolean; verified?: boolean; error?: string; rollback?: RollbackInfo };
       if (res && res.ok && res.verified) {
         singleActionMsg = `NV item deleted and verified successfully at ${path}`;
         await handleReadNv();
@@ -311,7 +339,12 @@
         <button class="btn btn-secondary" onclick={handleWriteNv} disabled={singleActionLoading || !writeHex.trim() || !$bridgeStatus.ready}>
           {singleActionLoading ? 'Writing...' : 'Write NV Item'}
         </button>
-        <button class="btn btn-danger" onclick={reviewDeleteNv} disabled={singleActionLoading || !$bridgeStatus.ready || !readResult}>
+        <button
+          class="btn btn-danger"
+          onclick={reviewDeleteNv}
+          disabled={singleActionLoading || !$bridgeStatus.ready || !readTarget || readTarget.path !== fullPath() || readTarget.slot !== slot}
+          title={readTarget ? 'Review current NV before deleting' : 'Read the item first (Review Delete locks to the exact path+slot read)'}
+        >
           {singleActionLoading ? 'Deleting...' : 'Review Delete'}
         </button>
       </div>
@@ -448,8 +481,8 @@
         </div>
         <div class="danger-zone card">
           <p class="caption" style="display: grid; gap: 4px;">
-            <span>Path: <span class="mono">{fullPath()}</span></span>
-            <span>Slot: {slot}</span>
+            <span>Path: <span class="mono">{readTarget?.path || '—'}</span></span>
+            <span>Slot: {readTarget?.slot ?? '—'}</span>
             <span>Current bytes: <span class="mono">{deleteCurrentBytes || '(unreadable — cannot confirm delete)'}</span></span>
           </p>
           <p class="caption" style="margin-top: 6px;">
