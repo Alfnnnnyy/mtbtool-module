@@ -106,6 +106,10 @@ check "import apply failure rollback attempted" "echo '$out_import_fail' | grep 
 read_imp_restored=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
 check "import apply first command restored" "echo '$read_imp_restored' | grep -q '11223344'"
 
+# --- real-format: QMI failure with exit 0 must be Error, not Absent ---
+out=$(FAKE_MTB_QMI_FAIL=1 "$BIN" nv read /nv/item_files/modem/mmode/nr_nsa_band_pref --slot 0 || true)
+check "qmi fail exit0 -> error not absent" "echo '$out' | grep -q 'qmi read failure'"
+
 # --- RPC bridge (mtbctl rpc --b64) ---
 p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)
 out=$("$BIN" rpc --b64 "$p")

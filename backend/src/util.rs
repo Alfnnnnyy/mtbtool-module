@@ -137,28 +137,89 @@ pub enum EfsRead {
     Error(String),
 }
 
+/// Semantic failure markers emitted by the real /vendor/bin/mtb even when
+/// the process exits 0 (verified on POCO F6 / peridot, Android 14):
+/// `rsp.result = -117` QMI failures print "qmi response fail" / "... fail,
+/// REQUEST_ID_EFS" / "Error happen! error_code(-117)" with exit code 0.
+const FAILURE_MARKERS: &[&str] = &[
+    "rsp.result = -",
+    "qmi response fail",
+    "send_sync fail",
+    "Error happen!",
+    "error_code(",
+];
+
+/// Parse a real `mtb 4 4` EFS read response (POCO F6 / peridot format).
+///
+/// Real-world output shape (verified against on-device captures):
+/// - each byte is printed on its own line as
+///   `<prefix> ... xiaomi_nvefs_test_efs_read:  FF`
+/// - the whole dump is printed TWICE: once with an `mtb:` prefix and once
+///   with an `RIL` prefix (the RIL block is the authoritative, complete one —
+///   the mtb block can be truncated, e.g. 63 of 64 bytes)
+/// - a `data len(N)` line declares the expected byte count
+/// - QMI semantic failures print FAILURE_MARKERS with exit code 0
+/// - stream interleaving can merge two lines; prefixes stay intact on the
+///   vast majority of lines, so classification is by line prefix
 pub fn parse_efs_read_output(exit_code: i32, raw: &str) -> EfsRead {
     if exit_code != 0 {
         return EfsRead::Error(format!("exit {}", exit_code));
     }
+    if raw.lines().any(|l| FAILURE_MARKERS.iter().any(|m| l.contains(m))) {
+        return EfsRead::Error("qmi read failure reported by mtb".to_string());
+    }
 
-    let mut bytes = Vec::new();
+    let mut declared: Option<usize> = None;
+    let mut mtb: Vec<u8> = Vec::new();
+    let mut ril: Vec<u8> = Vec::new();
+    let mut stray: Vec<u8> = Vec::new();
+
     for line in raw.lines() {
-        if line.contains("xiaomi_nvefs_test_efs_read:") {
-            if let Some(last) = line.trim().split_whitespace().last() {
-                if last.len() == 2 && last.chars().all(|c| c.is_ascii_hexdigit()) {
-                    if let Ok(b) = u8::from_str_radix(last, 16) {
-                        bytes.push(b);
-                    }
+        if !line.contains("xiaomi_nvefs_test_efs_read:") {
+            continue;
+        }
+        if let Some(pos) = line.find("data len(") {
+            if let Some(rest) = line[pos + "data len(".len()..].split(')').next() {
+                if let Ok(n) = rest.trim().parse::<usize>() {
+                    declared = Some(n);
+                }
+            }
+        }
+        let last = line.split_whitespace().last().unwrap_or("");
+        if last.len() == 2 && last.chars().all(|c| c.is_ascii_hexdigit()) {
+            if let Ok(b) = u8::from_str_radix(last, 16) {
+                if line.starts_with("mtb:") {
+                    mtb.push(b);
+                } else if line.starts_with("RIL") {
+                    ril.push(b);
+                } else {
+                    stray.push(b);
                 }
             }
         }
     }
 
-    if bytes.is_empty() {
-        EfsRead::Absent
+    let n = declared.unwrap_or(0);
+    if n == 0 {
+        // No declared length: an empty response means the item is absent
+        // (modem default). Any bytes without a declared length are
+        // unexpected — surface as an error rather than guessing.
+        if mtb.is_empty() && ril.is_empty() && stray.is_empty() {
+            EfsRead::Absent
+        } else {
+            EfsRead::Error("efs read output has no declared data length".to_string())
+        }
+    } else if ril.len() >= n {
+        EfsRead::Present(ril[..n].to_vec())
+    } else if mtb.len() >= n {
+        EfsRead::Present(mtb[..n].to_vec())
     } else {
-        EfsRead::Present(bytes)
+        EfsRead::Error(format!(
+            "efs read truncated: declared {} bytes, got mtb={} ril={}",
+            n,
+            mtb.len(),
+            ril.len()
+        ))
     }
 }
 

@@ -323,10 +323,67 @@ fn test_backup_traversal() {
 fn test_read_states() {
     assert_eq!(parse_efs_read_output(1, "x"), EfsRead::Error("exit 1".to_string()));
     assert_eq!(parse_efs_read_output(0, ""), EfsRead::Absent);
+}
+
+/// Simplified legacy single-block output must still parse.
+#[test]
+fn test_read_single_block() {
+    let mut raw = String::from("xiaomi_nvefs_test_efs_read: data len(2)\n");
+    raw.push_str("mtb: [mtb][cpp:179] xiaomi_nvefs_test_efs_read:  01\n");
+    raw.push_str("mtb: [mtb][cpp:179] xiaomi_nvefs_test_efs_read:  02");
+    assert_eq!(parse_efs_read_output(0, &raw), EfsRead::Present(vec![1, 2]));
+}
+
+/// Real POCO F6 / peridot format: duplicate mtb: + RIL blocks, per-byte
+/// lines, `data len(N)` declaration. RIL block is authoritative.
+#[test]
+fn test_read_real_format_dedup() {
+    let mut raw = String::from("mtb: [mtb][cpp:176] xiaomi_nvefs_test_efs_read: data len(4)\n");
+    for b in [0xFFu8, 0x3F, 0xDF, 0xFF] {
+        raw.push_str(&format!("mtb: [mtb][cpp:179] xiaomi_nvefs_test_efs_read:  {:02X}\n", b));
+    }
+    raw.push_str("RIL[xc:176] xiaomi_nvefs_test_efs_read: data len(4)\n");
+    for b in [0xFFu8, 0x3F, 0xDF, 0xFF] {
+        raw.push_str(&format!("RIL[xc:179] xiaomi_nvefs_test_efs_read:  {:02X}\n", b));
+    }
     assert_eq!(
-        parse_efs_read_output(0, "xiaomi_nvefs_test_efs_read: 01\nxiaomi_nvefs_test_efs_read: 02"),
-        EfsRead::Present(vec![1, 2])
+        parse_efs_read_output(0, &raw),
+        EfsRead::Present(vec![0xFF, 0x3F, 0xDF, 0xFF])
     );
+}
+
+/// Real output regression: mtb: block truncated (63 of 64), RIL complete —
+/// the parser must use the RIL block, NOT merge/duplicate, and honor the
+/// declared length.
+#[test]
+fn test_real_format_truncated_mtb_block() {
+    let mut raw = String::from("mtb: [mtb][cpp:176] xiaomi_nvefs_test_efs_read: data len(64)\n");
+    for i in 0..63u32 {
+        raw.push_str(&format!("mtb: [mtb][cpp:179] xiaomi_nvefs_test_efs_read:  {:02X}\n", i));
+    }
+    raw.push_str("RIL[xc:176] xiaomi_nvefs_test_efs_read: data len(64)\n");
+    raw.push_str("RIL[xc:179] xiaomi_nvefs_test_efs_read:  D7\n");
+    for _ in 0..63 {
+        raw.push_str("RIL[xc:179] xiaomi_nvefs_test_efs_read:  00\n");
+    }
+    let got = parse_efs_read_output(0, &raw);
+    match got {
+        EfsRead::Present(b) => {
+            assert_eq!(b.len(), 64, "must use declared length, not merge blocks");
+            assert_eq!(b[0], 0xD7, "must take the complete RIL block");
+            assert!(b[1..].iter().all(|&x| x == 0));
+        }
+        other => panic!("expected Present, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_read_qmi_failure_exit_0() {
+    let raw = "mtb: [mtb][xc:506] xiaomi_efs_read: result = 0, rsp.result = -117\n\
+    mtb: [mtb][xc:516] xiaomi_efs_read: qmi response fail\n\
+    mtb: [mtb][cpp:172] xiaomi_nvefs_test_efs_read: xiaomi_extend_qmi_send_sync fail, REQUEST_ID_EFS\n\
+    mtb: [mtb][cpp:323] xiaomi_test_nvefs_do: note: Error happen! error_code(-117)";
+    assert!(matches!(parse_efs_read_output(0, raw), EfsRead::Error(_)));
 }
 
 #[test]
@@ -585,4 +642,38 @@ fn test_latest_and_list_use_full_key_same_millis() {
     assert_eq!(order, ids, "list_backups must sort by full key desc");
 
     let _ = fs::remove_dir_all(&tmp_dir);
+}
+
+/// FULL on-device captures from POCO F6 / peridot (Android 14), embedded as
+/// regression fixtures. These are real /vendor/bin/mtb outputs — the parser
+/// must handle duplicate mtb:/RIL blocks, truncation and exit-0 QMI failures.
+#[test]
+fn test_real_device_fixtures() {
+    let lte = include_str!("../../tests/fixtures/raw-02-lte-primary.txt");
+    assert_eq!(
+        parse_efs_read_output(0, lte),
+        EfsRead::Present(vec![0xFF, 0x3F, 0xDF, 0xFF, 0xFF, 0xFF, 0x00, 0x00]),
+        "lte_bandpref must parse its 8 real bytes"
+    );
+
+    let ext = include_str!("../../tests/fixtures/raw-03-lte-extension.txt");
+    match parse_efs_read_output(0, ext) {
+        EfsRead::Present(b) => assert_eq!(b.len(), 24, "lte extension declared 24 bytes"),
+        other => panic!("lte extension expected Present, got {:?}", other),
+    }
+
+    let nsa = include_str!("../../tests/fixtures/raw-04-nr-nsa.txt");
+    assert!(
+        matches!(parse_efs_read_output(0, nsa), EfsRead::Error(_)),
+        "nr_nsa QMI failure must be Error, not Absent"
+    );
+
+    let sa = include_str!("../../tests/fixtures/raw-05-nr-sa.txt");
+    match parse_efs_read_output(0, sa) {
+        EfsRead::Present(b) => {
+            assert_eq!(b.len(), 64, "nr_band_pref declared 64 bytes");
+            assert_eq!(&b[..4], &[0xD7, 0x00, 0x08, 0x08], "RIL block must win over truncated mtb");
+        }
+        other => panic!("nr SA expected Present, got {:?}", other),
+    }
 }

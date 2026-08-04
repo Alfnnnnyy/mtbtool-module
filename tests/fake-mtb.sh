@@ -8,14 +8,30 @@ case "$1" in
     op="$2"; slot="$3"; path="$4"
     k=$(key "$slot" "$path")
     case "$op" in
-      4) # read: tag per 16-byte line; absent => exit 0 empty (real modem behavior)
+      4) # read — REAL peridot format: per-byte tagged lines, printed TWICE
+        # (mtb: block then RIL block), plus a "data len(N)" declaration.
+        # FAKE_MTB_FAIL_PATH => exit 3 (read error).
+        # FAKE_MTB_QMI_FAIL=1  => exit 0 but QMI failure markers, no bytes
+        # (parser must report Error, not Absent).
         if [ -n "${FAKE_MTB_FAIL_PATH:-}" ] && [[ "$path" == *"$FAKE_MTB_FAIL_PATH"* ]]; then
           exit 3
         fi
+        if [ "${FAKE_MTB_QMI_FAIL:-0}" = "1" ]; then
+          echo "mtb: [mtb][xiaomi_extend_nvefs.c:506] xiaomi_efs_read: result = 0, rsp.result = -117"
+          echo "mtb: [mtb][xiaomi_extend_nvefs.c:516] xiaomi_efs_read: qmi response fail"
+          echo "mtb: [mtb][cpp:172] xiaomi_nvefs_test_efs_read: xiaomi_extend_qmi_send_sync fail, REQUEST_ID_EFS"
+          exit 0
+        fi
         if [ -f "$STORE/$k" ]; then
           hex=$(cat "$STORE/$k")
+          n=$(( ${#hex} / 2 ))
+          echo "mtb: [mtb][cpp:176] xiaomi_nvefs_test_efs_read: data len($n)"
           echo "$hex" | fold -w2 | while read -r b; do
-            echo "xiaomi_nvefs_test_efs_read: $b"
+            echo "mtb: [mtb][cpp:179] xiaomi_nvefs_test_efs_read:  $b"
+          done
+          echo "RIL[xc:176] xiaomi_nvefs_test_efs_read: data len($n)"
+          echo "$hex" | fold -w2 | while read -r b; do
+            echo "RIL[xc:179] xiaomi_nvefs_test_efs_read:  $b"
           done
         fi
         exit 0

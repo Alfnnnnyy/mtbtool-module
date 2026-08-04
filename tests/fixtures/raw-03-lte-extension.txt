@@ -1,0 +1,92 @@
+libc: Access denied finding property "ro.debuggable"
+mtb: merge, old xiaomi_hal_set_logcat_print_mask 0xffff, merge_mask 0xffff
+mtb: new xiaomi_hal_set_logcat_print_mask 0xffff
+mtb: logcat print is started, g_xiaomi_logcat_print_mask 0xffff
+mtb: xiaomi_get_current_pid_name, proc_pid_buf = /vendor/bin/mtb
+mtb: xiaomi_get_current_pid_name, str_pid_name: /mtb
+mtb: xiaomi_get_current_pid_name, g_pid_info.p_name = mtb
+mtb: [mtb][xiaomi_extend_nvefs.c:433] xiaomi_efs_read: function entry ------------->
+mtb: merge, old g_xiaomi_shell_print_mask 0xffff, merge_mask 0xffff
+mtb: new g_xiaomi_shell_print_mask 0xffff
+mtb: shell print is started, g_xiaomi_shell_print_mask 0xffff
+mtb: [mtb][xiaomi_extend_nvefs.c:438] xiaomi_efs_read: xiaomi_efs_read, sub_id 0, path_len: 51
+mtb: [mtb][xiaomi_extend_nvefs.c:475] xiaomi_efs_read: buf_len: 365
+mtb: [mtb][xiaomi_extend_nvefs.c:485] xiaomi_efs_read: path_value: /nv/item_files/modem/mmode/lte_bandpref_extn_65_256
+mtb: [mtb][xiaomi_extend_api.c:239] xiaomi_extend_qmi_client_open: XIAOMI_QMI_NV: qmi_client_get_service_list() returned 0 num_services = 1
+mtb: [mtb][xiaomi_extend_api.c:250] xiaomi_extend_qmi_client_open: qmi_client_get_service_list, err = 0, num_entries = 1, num_services = 1
+mtb: [mtb][xiaomi_extend_api.c:260] xiaomi_extend_qmi_client_open: qmi_client_init, err = 0, handle = 2, client_handle = 0
+mtb: [mtb][xiaomi_extend_api.c:268] xiaomi_extend_qmi_client_open: QMI client inited
+mtb: [mtb][xiaomi_extend_api.c:388] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_send_sync resp_len:444
+mtb: [mtb][xiaomi_extend_api.c:390] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_handle_req_cb result:0
+mtb: [mtb][xiaomi_extend_nvefs.c:76] xiaomi_qmi_result_map: xiaomi_qmi_result_map, old_result 0, new_result 0
+mtb: [mtb][xiaomi_extend_nvefs.c:506] xiaomi_efs_read: result = 0, rsp.result = 0
+mtb: [mtb][xiaomi_extend_nvefs.c:524] xiaomi_efs_read: data_len_all = 24, data_len_send = 24, data_len_recv = 24, read_count = 1, data_len_cur = 0
+mtb: [mtb][xiaomi_extend_nvefs.c:562] xiaomi_efs_read: function exit <-------------
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:176] xiaomi_nvefs_test_efs_read: data len(24)
+data: 
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  02
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  48
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:181] xiaomi_nvefs_test_efs_read: 
+RIL[xiaomi_extend_nvefs.c:433] xiaomi_efs_read: function entry ------------->
+RIL[xiaomi_extend_nvefs.c:438] xiaomi_efs_read: xiaomi_efs_read, sub_id 0, path_len: 51
+RIL[xiaomi_extend_nvefs.c:475] xiaomi_efs_read: buf_len: 365
+RIL[xiaomi_extend_nvefs.c:485] xiaomi_efs_read: path_value: /nv/item_files/modem/mmode/lte_bandpref_extn_65_256
+RIL[xiaomi_extend_api.c:239] xiaomi_extend_qmi_client_open: XIAOMI_QMI_NV: qmi_client_get_service_list() returned 0 num_services = 1
+RIL[xiaomi_extend_api.c:250] xiaomi_extend_qmi_client_open: qmi_client_get_service_list, err = 0, num_entries = 1, num_services = 1
+RIL[xiaomi_extend_api.c:260] xiaomi_extend_qmi_client_open: qmi_client_init, err = 0, handle = 2, client_handle = 0
+RIL[xiaomi_extend_api.c:268] xiaomi_extend_qmi_client_open: QMI client inited
+RIL[xiaomi_extend_api.c:388] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_send_sync resp_len:444
+RIL[xiaomi_extend_api.c:390] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_handle_req_cb result:0
+RIL[xiaomi_extend_nvefs.c:76] xiaomi_qmi_result_map: xiaomi_qmi_result_map, old_result 0, new_result 0
+RIL[xiaomi_extend_nvefs.c:506] xiaomi_efs_read: result = 0, rsp.result = 0
+RIL[xiaomi_extend_nvefs.c:524] xiaomi_efs_read: data_len_all = 24, data_len_send = 24, data_len_recv = 24, read_count = 1, data_len_cur = 0
+RIL[xiaomi_extend_nvefs.c:562] xiaomi_efs_read: function exit <-------------
+RIL[xiaomi_mtb_test_nvefs.cpp:176] xiaomi_nvefs_test_efs_read: data len(24)
+data: 
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  02
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  00
+RIL[xiaomi_mtb_test_nvefs.cpp:179] xiaomi_nvefs_test_efs_read:  48
+RIL[xiaomi_mtb_test_nvefs.cpp:181] xiaomi_nvefs_test_efs_read: 

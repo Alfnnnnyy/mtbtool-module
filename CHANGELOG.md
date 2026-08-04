@@ -6,6 +6,31 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-04
+
+### Fixed — real-device parser (POCO F6 / peridot, Android 14)
+First on-device captures exposed output formats the host harness had guessed
+wrong:
+- **Duplicate output blocks**: successful EFS reads print every byte TWICE —
+  once with an `mtb:` prefix and once with an `RIL` prefix. The old parser
+  merged them (declared 8 bytes, parsed 16). The new parser classifies lines
+  by prefix and uses the RIL block (authoritative and complete; the mtb
+  block can be truncated, e.g. 63 of 64 bytes).
+- **Exit-0 QMI failures**: `rsp.result = -117` / "qmi response fail" /
+  "error_code(-117)" print with process exit code 0 and no bytes. These are
+  now EfsRead::Error — previously they were treated as Absent, which would
+  have allowed a write/backup on a broken read.
+- **Declared length honored**: `data len(N)` is read and parse results are
+  validated against it; truncated output is an error, not a guess.
+- **Regression fixtures**: the four real device captures are vendored in
+  `tests/fixtures/` and asserted in `test_real_device_fixtures`
+  (lte_bandpref 8 bytes, lte extension 24, nr_band_pref 64 with RIL block
+  preferred, nr_nsa QMI failure).
+- `tests/fake-mtb.sh` now emits the real peridot format (mtb: + RIL blocks,
+  data len, QMI-fail mode) so the smoke suite exercises the same shapes.
+- Write/restore remain GATED: no modem write is enabled until the restored
+  parser is verified on-device.
+
 ## [1.0.6] - 2026-08-04
 
 ### Fixed

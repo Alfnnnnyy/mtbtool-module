@@ -1,0 +1,62 @@
+libc: Access denied finding property "ro.debuggable"
+mtb: merge, old xiaomi_hal_set_logcat_print_mask 0xffff, merge_mask 0xffff
+mtb: new xiaomi_hal_set_logcat_print_mask 0xffff
+mtb: logcat print is started, g_xiaomi_logcat_print_mask 0xffff
+mtb: xiaomi_get_current_pid_name, proc_pid_buf = /vendor/bin/mtb
+mtb: xiaomi_get_current_pid_name, str_pid_name: /mtb
+mtb: xiaomi_get_current_pid_name, g_pid_info.p_name = mtb
+mtb: [mtb][xiaomi_extend_nvefs.c:433] xiaomi_efs_read: function entry ------------->
+mtb: merge, old g_xiaomi_shell_print_mask 0xffff, merge_mask 0xffff
+mtb: new g_xiaomi_shell_print_mask 0xffff
+mtb: shell print is started, g_xiaomi_shell_print_mask 0xffff
+mtb: [mtb][xiaomi_extend_nvefs.c:438] xiaomi_efs_read: xiaomi_efs_read, sub_id 0, path_len: 43
+mtb: [mtb][xiaomi_extend_nvefs.c:475] xiaomi_efs_read: buf_len: 365
+mtb: [mtb][xiaomi_extend_nvefs.c:485] xiaomi_efs_read: path_value: /nv/item_files/modem/mmode/nr_nsa_band_pref
+mtb: [mtb][xiaomi_extend_api.c:239] xiaomi_extend_qmi_client_open: XIAOMI_QMI_NV: qmi_client_get_service_list() returned 0 num_services = 1
+mtb: [mtb][xiaomi_extend_api.c:250] xiaomi_extend_qmi_client_open: qmi_client_get_service_list, err = 0, num_entries = 1, num_services = 1
+mtb: [mtb][xiaomi_extend_api.c:260] xiaomi_extend_qmi_client_open: qmi_client_init, err = 0, handle = 2, client_handle = 0
+mtb: [mtb][xiaomi_extend_api.c:268] xiaomi_extend_qmi_client_open: QMI client inited
+mtb: [mtb][xiaomi_extend_api.c:388] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_send_sync resp_len:444
+mtb: [mtb][xiaomi_extend_api.c:390] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_handle_req_cb result:0
+mtb: [mtb][xiaomi_extend_nvefs.c:76] xiaomi_qmi_result_map: xiaomi_qmi_result_map, old_result 0, new_result 0
+mtb: [mtb][xiaomi_extend_nvefs.c:506] xiaomi_efs_read: result = 0, rsp.result = -117
+mtb: [mtb][xiaomi_extend_nvefs.c:516] xiaomi_efs_read: qmi response fail
+mtb: [mtb][xiaomi_extend_nvefs.c:562] xiaomi_efs_read: function exit <-------------
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:172] xiaomi_nvefs_test_efs_read: xiaomi_extend_qmi_send_sync fail, REQUEST_ID_EFS
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:323] xiaomi_test_nvefs_do: note: Error happen! error_code(-117)
+mtb: [mtb][xiaomi_mtb_test_main.cpp:53] show_help: =========== blew: modem_test_box(mtb) cmd help =======================================================
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:344] xiaomi_test_nvefs_show_help: 4: nvefs option cmd: 
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:345] xiaomi_test_nvefs_show_help:    mtb 4 1 sub nv_id             /* nv read */
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:346] xiaomi_test_nvefs_show_help:    mtb 4 2 sub nv_id nv_data     /* nv write */
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:347] xiaomi_test_nvefs_show_help:    mtb 4 3 sub nv_id             /* nv delete */
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:348] xiaomi_test_nvefs_show_help:    mtb 4 4 sub efs_path          /* efs read */
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:349] xiaomi_test_nvefs_show_help:    mtb 4 5 sub efs_path efs_data /* efs write */
+mtb: [mtb][xiaomi_mtb_test_nvefs.cpp:350] xiaomi_test_nvefs_show_help:    mtb 4 6 sub efs_path          /* efs delete */
+mtb: [mtb][xiaomi_mtb_test_main.cpp:85] show_help: =========== above: modem_test_box(mtb) cmd help =======================================================
+
+RIL[xiaomi_extend_nvefs.c:433] xiaomi_efs_read: function entry ------------->
+RIL[xiaomi_extend_nvefs.c:438] xiaomi_efs_read: xiaomi_efs_read, sub_id 0, path_len: 43
+RIL[xiaomi_extend_nvefs.c:475] xiaomi_efs_read: buf_len: 365
+RIL[xiaomi_extend_nvefs.c:485] xiaomi_efs_read: path_value: /nv/item_files/modem/mmode/nr_nsa_band_pref
+RIL[xiaomi_extend_api.c:239] xiaomi_extend_qmi_client_open: XIAOMI_QMI_NV: qmi_client_get_service_list() returned 0 num_services = 1
+RIL[xiaomi_extend_api.c:250] xiaomi_extend_qmi_client_open: qmi_client_get_service_list, err = 0, num_entries = 1, num_services = 1
+RIL[xiaomi_extend_api.c:260] xiaomi_extend_qmi_client_open: qmi_client_init, err = 0, handle = 2, client_handle = 0
+RIL[xiaomi_extend_api.c:268] xiaomi_extend_qmi_client_open: QMI client inited
+RIL[xiaomi_extend_api.c:388] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_send_sync resp_len:444
+RIL[xiaomi_extend_api.c:390] xiaomi_extend_qmi_send_sync: xiaomi_extend_qmi_handle_req_cb result:0
+RIL[xiaomi_extend_nvefs.c:76] xiaomi_qmi_result_map: xiaomi_qmi_result_map, old_result 0, new_result 0
+RIL[xiaomi_extend_nvefs.c:506] xiaomi_efs_read: result = 0, rsp.result = -117
+RIL[xiaomi_extend_nvefs.c:516] xiaomi_efs_read: qmi response fail
+RIL[xiaomi_extend_nvefs.c:562] xiaomi_efs_read: function exit <-------------
+RIL[xiaomi_mtb_test_nvefs.cpp:172] xiaomi_nvefs_test_efs_read: xiaomi_extend_qmi_send_sync fail, REQUEST_ID_EFS
+RIL[xiaomi_mtb_test_nvefs.cpp:323] xiaomi_test_nvefs_do: note: Error happen! error_code(-117)
+=========== blew: modem_test_box(mtb) cmd help =======================================================
+4: nvefs option cmd: 
+   mtb 4 1 sub nv_id             /* nv read */
+   mtb 4 2 sub nv_id nv_data     /* nv write */
+   mtb 4 3 sub nv_id             /* nv delete */
+   mtb 4 4 sub efs_path          /* efs read */
+   mtb 4 5 sub efs_path efs_data /* efs write */
+   mtb 4 6 sub efs_path          /* efs delete */
+=========== above: modem_test_box(mtb) cmd help =======================================================
+
