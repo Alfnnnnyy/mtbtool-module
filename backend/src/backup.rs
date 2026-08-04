@@ -48,6 +48,9 @@ impl BackupEntry {
         validate_nv_path(&self.path)?;
         match &self.bytes {
             Some(hex) => {
+                if !crate::util::is_valid_sha256(&self.sha256) {
+                    return Err(format!("missing/invalid checksum for {}", self.path));
+                }
                 let raw = parse_hex(hex)
                     .map_err(|_| format!("Backup entry has invalid hex for {}", self.path))?;
                 if raw.len() as u64 != self.size {
@@ -58,7 +61,7 @@ impl BackupEntry {
                         self.size
                     ));
                 }
-                if !self.sha256.is_empty() && hex_sha256(&raw) != self.sha256 {
+                if hex_sha256(&raw) != self.sha256 {
                     return Err(format!("Backup entry checksum mismatch for {}", self.path));
                 }
                 Ok(())
@@ -134,12 +137,38 @@ pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, 
     let json_content = serde_json::to_string_pretty(&backup)
         .map_err(|e| format!("Failed to serialize backup: {}", e))?;
 
-    let file_path = backups_dir.join(format!("{}.json", id));
-    fs::write(&file_path, &json_content)
-        .map_err(|e| format!("Failed to write backup file {:?}: {}", file_path, e))?;
+    let tmp_file_path = backups_dir.join(format!("{}.json.tmp", id));
+    let final_file_path = backups_dir.join(format!("{}.json", id));
 
-    let latest_path = backups_dir.join("latest.json");
-    let _ = fs::write(&latest_path, &json_content);
+    fs::write(&tmp_file_path, &json_content)
+        .map_err(|e| format!("Failed to write tmp backup file {:?}: {}", tmp_file_path, e))?;
+
+    let file = fs::File::open(&tmp_file_path)
+        .map_err(|e| format!("Failed to open tmp backup file {:?}: {}", tmp_file_path, e))?;
+    file.sync_all()
+        .map_err(|e| format!("Failed to fsync tmp backup file {:?}: {}", tmp_file_path, e))?;
+    drop(file);
+
+    fs::rename(&tmp_file_path, &final_file_path)
+        .map_err(|e| format!("Failed to rename backup file to {:?}: {}", final_file_path, e))?;
+
+    // Best-effort directory fsync
+    if let Ok(dir_file) = fs::File::open(&backups_dir) {
+        let _ = dir_file.sync_all();
+    }
+
+    // Atomic write for latest.json
+    let latest_tmp = backups_dir.join("latest.json.tmp");
+    let latest_final = backups_dir.join("latest.json");
+    if fs::write(&latest_tmp, &json_content).is_ok() {
+        if let Ok(file) = fs::File::open(&latest_tmp) {
+            let _ = file.sync_all();
+        }
+        let _ = fs::rename(&latest_tmp, &latest_final);
+        if let Ok(dir_file) = fs::File::open(&backups_dir) {
+            let _ = dir_file.sync_all();
+        }
+    }
 
     Ok(backup)
 }
@@ -216,6 +245,8 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
 /// Restore a backup. FAILS CLOSED: every entry is integrity-verified BEFORE
 /// any write happens; a single mismatch aborts with no partial restore.
 pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
+    let _lock = crate::mtb::FileLock::acquire().map_err(|e| e.to_string())?;
+
     let backup = get_backup(id)?;
 
     if backup.version != BACKUP_VERSION {
@@ -231,13 +262,32 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
         entry.verify_integrity()?;
     }
 
-    // 2. Apply (each item write/delete, then read-back comparison).
-    let mut restored = Vec::new();
+    // 2. Pre-read every entry's current state BEFORE applying
+    let mut snapshots: Vec<(i32, String, Option<Vec<u8>>)> = Vec::new();
     for entry in &backup.entries {
+        let (exit_before, raw_before) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
+        match parse_efs_read_output(exit_before, &raw_before) {
+            EfsRead::Present(b) => snapshots.push((entry.slot, entry.path.clone(), Some(b))),
+            EfsRead::Absent => snapshots.push((entry.slot, entry.path.clone(), None)),
+            EfsRead::Error(e) => {
+                return Err(format!("Failed to pre-read {} before restore: {}", entry.path, e));
+            }
+        }
+    }
+
+    // 3. Apply entries in order
+    let mut restored = Vec::new();
+    for (idx, entry) in backup.entries.iter().enumerate() {
         let (exit, ok, verified) = match &entry.bytes {
             Some(hex_bytes) => {
-                let raw_bytes = parse_hex(hex_bytes)
-                    .map_err(|e| format!("Backup payload invalid for {}: {}", entry.path, e))?;
+                let raw_bytes = match parse_hex(hex_bytes) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        // Rollback already applied entries 0..idx
+                        rollback_snapshots(&snapshots[..idx]);
+                        return Err(format!("restore failed at {}, rolled back: {}", entry.path, e));
+                    }
+                };
                 let mut write_args: Vec<String> =
                     vec!["4".into(), "5".into(), entry.slot.to_string(), entry.path.clone()];
                 write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
@@ -268,6 +318,7 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
                 }
             }
         };
+
         restored.push(serde_json::json!({
             "slot": entry.slot,
             "path": entry.path,
@@ -275,7 +326,29 @@ pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
             "exit": exit,
             "verified": verified
         }));
+
+        if exit != 0 || !verified {
+            // Rollback already applied entries (0..=idx) from snapshot
+            rollback_snapshots(&snapshots[..=idx]);
+            return Err(format!("restore failed at {}, rolled back", entry.path));
+        }
     }
 
     Ok(restored)
+}
+
+fn rollback_snapshots(snapshots: &[(i32, String, Option<Vec<u8>>)]) {
+    for (slot, path, before) in snapshots {
+        match before {
+            Some(b) => {
+                let mut write_args: Vec<String> =
+                    vec!["4".into(), "5".into(), slot.to_string(), path.clone()];
+                write_args.extend(b.iter().map(|byte| byte.to_string()));
+                let _ = exec_mtb_owned(write_args);
+            }
+            None => {
+                let _ = exec_mtb(&["4", "6", &slot.to_string(), path]);
+            }
+        }
+    }
 }

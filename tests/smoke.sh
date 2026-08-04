@@ -22,6 +22,7 @@ check() { # name, condition-string
   if eval "$2"; then echo "PASS: $1"; else echo "FAIL: $1"; fail=1; fi
 }
 
+b64url() { python3 -c "import base64,sys; print(base64.urlsafe_b64encode(sys.stdin.buffer.read()).rstrip(b'=').decode())"; }
 # --- basic protocol roundtrip ---
 "$BIN" nv write /nv/item_files/modem/mmode/lte_bandpref 0000008000000085 --slot 0 --reason smoke | jqcheck
 out=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
@@ -34,6 +35,10 @@ out=$("$BIN" bandlock set --lte "1,3" --slot 1)
 check "bandlock set sim1 path" "echo '$out' | grep -q 'lte_bandpref_Subscription01'"
 out=$("$BIN" bandlock get --slot 0)
 check "bandlock get bands" "echo '$out' | grep -q '40' && echo '$out' | grep -q '78'"
+
+# test bandlock partial category writes & store untouched check
+out=$("$BIN" bandlock set --lte "1,3" --slot 0)
+check "bandlock set partial writes lte" "echo '$out' | grep -q 'lte_bandpref' && ! echo '$out' | grep -q 'nr_band_pref'"
 
 # --- DIAG band detect ---
 out=$("$BIN" bandlock detect)
@@ -73,10 +78,35 @@ check "nv restored bytes" "echo '$read_rest' | grep -q '11223344'"
 # --- bandlock validation ---
 set_empty=$("$BIN" bandlock set --slot 0 || true)
 check "bandlock set empty rejected" "echo '$set_empty' | grep -q 'refusing zero-band mask'"
+set_nr_no_allow=$("$BIN" bandlock set --nrNsa "" --slot 0 || true)
+check "bandlock set --nrNsa empty rejected without allow" "echo '$set_nr_no_allow' | grep -q 'allowEmpty'"
+set_nr_allow=$("$BIN" bandlock set --nrNsa "" --allow-empty --slot 0)
+check "bandlock set --nrNsa empty accepted with allow" "echo '$set_nr_allow' | grep -q '\"ok\":true'"
 check "bandlock set invalid band exit code" '! "$BIN" bandlock set --lte "9999" --slot 0 > /dev/null 2>&1'
 
+# test bandlock get partial read error
+out_fail_get=$(FAKE_MTB_FAIL_PATH="nr_band_pref" "$BIN" bandlock get --slot 0 || true)
+check "bandlock get partial read error" "echo '$out_fail_get' | grep -q '\"ok\":false' && echo '$out_fail_get' | grep -q 'read failed for'"
+# test probe missing mtb
+out_probe_nomtb=$(MTB_BIN=/nonexistent "$BIN" rpc --b64 "$(printf '%s' '{"method":"probe","params":{}}' | b64url)" || true)
+check "probe missing mtb" "echo '$out_probe_nomtb' | grep -q '\"ok\":false'"
+
+# test nv write verify-fail auto-restore
+"$BIN" nv write /nv/item_files/modem/mmode/lte_bandpref 11223344 --slot 0 --reason pre_fail_test | jqcheck
+out_write_fail=$(FAKE_MTB_FAIL_WRITE="aabbccdd" "$BIN" nv write /nv/item_files/modem/mmode/lte_bandpref aabbccdd --slot 0 || true)
+check "nv write verify-fail ok:false" "echo '$out_write_fail' | grep -q '\"ok\":false'"
+check "nv write verify-fail rollback attempted" "echo '$out_write_fail' | grep -q '\"attempted\":true'"
+read_after_restore=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
+check "nv write verify-fail bytes restored" "echo '$read_after_restore' | grep -q '11223344'"
+
+# test import apply failure rollback mid-list
+out_import_fail=$(FAKE_MTB_FAIL_WRITE="aabbccdd" "$BIN" import apply --json '{"sim0":{"/nv/item_files/modem/mmode/lte_bandpref":{"t":{"op":"w","data":"55555555"}},"/nv/item_files/modem/mmode/nr_band_pref":{"t":{"op":"w","data":"aabbccdd"}}}}' || true)
+check "import apply failure ok:false" "echo '$out_import_fail' | grep -q '\"ok\":false'"
+check "import apply failure rollback attempted" "echo '$out_import_fail' | grep -q '\"attempted\":true'"
+read_imp_restored=$("$BIN" nv read /nv/item_files/modem/mmode/lte_bandpref --slot 0)
+check "import apply first command restored" "echo '$read_imp_restored' | grep -q '11223344'"
+
 # --- RPC bridge (mtbctl rpc --b64) ---
-b64url() { python3 -c "import base64,sys; print(base64.urlsafe_b64encode(sys.stdin.buffer.read()).rstrip(b'=').decode())"; }
 p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)
 out=$("$BIN" rpc --b64 "$p")
 check "rpc probe" "echo '$out' | grep -q '\"ok\":true'"

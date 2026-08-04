@@ -2,17 +2,18 @@
   import { rpc } from '../bridge';
   import { ShieldAlert, RefreshCw, Archive, Cpu, Smartphone, Folder, Activity, Radio, Sliders, Search, Zap } from 'lucide-svelte';
 
-  interface ProbeResult {
-    ok: boolean;
-    mtb_path?: string;
-    mtb_exists?: boolean;
-    mtb_executable?: boolean;
-    mtbctl_version?: string;
-    model?: string;
-    android_sdk?: number | string;
-    data_dir?: string;
-    error?: string;
-  }
+interface ProbeResult {
+  ok: boolean;
+  mtb_path?: string;
+  mtb_exists?: boolean;
+  mtb_executable?: boolean;
+  mtb_responds?: boolean;
+  mtbctl_version?: string;
+  model?: string;
+  android_sdk?: number | string;
+  data_dir?: string;
+  error?: string;
+}
 
   interface BackupItem {
     id: string;
@@ -103,6 +104,15 @@
       <p style="color: var(--text-muted);">Probing MTB binary and environment...</p>
     </div>
   {:else if probe}
+    {@const isConnected = probe.ok === true && probe.mtb_executable === true}
+    {#if probe.ok && (!probe.mtb_executable || !probe.mtb_responds)}
+      <div class="card status-warn-card" style="border-color: var(--warning); background-color: rgba(255, 171, 0, 0.05); margin-bottom: 12px;">
+        <strong style="color: var(--warning);">mtb binary present but not responding (SELinux/QIPCRTR?)</strong>
+        <div class="mono caption" style="margin-top: 4px; color: var(--text-secondary);">
+          Path: {probe.mtb_path || '/vendor/bin/mtb'} | Exists: {probe.mtb_exists ? 'yes' : 'no'} | Executable: {probe.mtb_executable ? 'yes' : 'no'} | Responds: {probe.mtb_responds ? 'yes' : 'no'}
+        </div>
+      </div>
+    {/if}
     <div class="section-label">MODEM & SYSTEM STATUS</div>
     <div class="card-grid">
       <div class="card info-card">
@@ -114,10 +124,10 @@
         <div class="info-val">{probe.android_sdk || 'Unknown'}</div>
       </div>
       <div class="card info-card">
-        <div class="info-header"><Activity size={16} /> MTB Binary</div>
+        <div class="info-header"><Activity size={16} /> Backend Status</div>
         <div class="info-val">
-          <span class={`chip ${probe.mtb_exists ? 'status-ok' : 'status-err'}`}>
-            {probe.mtb_exists ? 'Present' : 'Missing'}
+          <span class={`chip ${isConnected ? 'status-ok' : 'status-err'}`}>
+            {isConnected ? 'Connected' : 'Disconnected / Degraded'}
           </span>
           <span class="mono caption">{probe.mtb_path || '/vendor/bin/mtb'}</span>
         </div>

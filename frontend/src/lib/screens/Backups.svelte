@@ -16,8 +16,23 @@
     size?: number;
   }
 
+  interface RollbackEntry {
+    path: string;
+    action: string;
+    exit: number;
+    verified: boolean;
+  }
+
+  interface RollbackInfo {
+    attempted: boolean;
+    verified: boolean;
+    entries?: RollbackEntry[];
+  }
+
   interface RestoreResult {
     ok: boolean;
+    error?: string;
+    rollback?: RollbackInfo;
     restored?: Array<{
       slot: number;
       path: string;
@@ -59,14 +74,14 @@
     statusMsg = null;
     try {
       const res = await rpc('backup.restore', { id }) as RestoreResult;
-      if (res && res.ok) {
-        const restoredList = res.restored || [];
-        const allVerified = restoredList.length > 0 && restoredList.every(r => r.verified === true);
-        if (allVerified) {
-          statusMsg = `Backup '${id}' successfully restored and verified on modem!`;
-        } else {
-          statusMsg = `Backup '${id}' restored but read-back verification FAILED for one or more items`;
-        }
+      const restoredList = res?.restored || [];
+      const allOkAndVerified = res && res.ok && restoredList.length > 0 && restoredList.every(r => r.ok && r.verified === true);
+      if (allOkAndVerified) {
+        statusMsg = `Backup '${id}' successfully restored and verified on modem!`;
+      } else {
+        let msg = res?.error || 'Restore failed (partial restore or verification error)';
+        if (res?.rollback) msg += ' (rolled back)';
+        statusMsg = msg;
       }
     } catch (e: unknown) {
       statusMsg = `Restore error: ${e instanceof Error ? e.message : String(e)}`;
@@ -80,14 +95,14 @@
     statusMsg = null;
     try {
       const res = await rpc('backup.restore', { id: 'latest' }) as RestoreResult;
-      if (res && res.ok) {
-        const restoredList = res.restored || [];
-        const allVerified = restoredList.length > 0 && restoredList.every(r => r.verified === true);
-        if (allVerified) {
-          statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup payload rewritten and verified on modem!';
-        } else {
-          statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup rewritten, but read-back verification FAILED for some items';
-        }
+      const restoredList = res?.restored || [];
+      const allOkAndVerified = res && res.ok && restoredList.length > 0 && restoredList.every(r => r.ok && r.verified === true);
+      if (allOkAndVerified) {
+        statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup payload rewritten and verified on modem!';
+      } else {
+        let msg = res?.error || 'Emergency restore failed (partial restore or verification error)';
+        if (res?.rollback) msg += ' (rolled back)';
+        statusMsg = msg;
         showEmergencyModal = false;
         await loadBackups();
       }

@@ -76,3 +76,61 @@ Backup file `/data/adb/mtbtool/backups/<ts>_<reason>.json`:
 Everything else from v1 contract (CLI commands, band lists, feature table,
 cells parsing, DIAG heuristic, path allowlist, flock, no auto-apply) is
 unchanged. Backend files: rpc.rs replaces http.rs; backup.rs manifest v2.
+
+# Contract v3 — audit round 3 (transactionality & verification truth)
+
+## bandlock.set — partial-category semantics (finding 1)
+- Params `lte` / `nrNsa` / `nrSa` are each OPTIONAL. A MISSING key means
+  "leave that RAT untouched" (path not written). A PRESENT EMPTY string means
+  "zero mask for that RAT" and is REJECTED unless `allowEmpty: true` is also
+  passed. Missing ≠ empty. `writes[]` lists only the paths actually touched.
+- Frontend: only sends categories with >=1 selected band; a category the user
+  explicitly cleared to zero is sent as "" + allowEmpty:true after a
+  dedicated confirm dialog; never-configured categories are omitted.
+
+## bandlock.get — read errors are fatal for Apply (finding 2)
+- If ANY of the 4 NV reads fails: `ok:false` + `errors` object (existing) +
+  `bands` filled only for successful reads. UI must NOT apply when the last
+  get failed.
+
+## Rollback reporting — verified rollback (finding 3)
+- Every transactional operation (bandlock.set, import.apply,
+  features.disable/restore, backup.restore, nv.write/delete auto-restore)
+  reports rollback as:
+  `"rollback": {"attempted": bool, "verified": bool,
+   "entries": [{"path", "action": "write|delete", "exit": int, "verified": bool}]}`
+  `verified` is only true when every entry was re-read and matches its
+  before-state. `ok` is ALWAYS false when rollback ran.
+
+## ok = verified everywhere (findings 4,5,6)
+- nv.write / nv.delete: `ok = write_exit==0 && verified`; on verify failure
+  the backend auto-restores from the backup it just created (single-path
+  rollback) and returns ok:false + rollback.
+- import.apply: stops at the FIRST failed command (exit!=0, read-back error,
+  or verified==false), rolls back every already-applied command from the
+  single transaction backup, returns ok:false + results (with verified per
+  command) + rollback.
+- features.disable / features.restore: identical transactional pattern to
+  bandlock.set (one backup, write all, verify all, rollback all, ok:false on
+  any failure).
+
+## backup.restore — exclusive + transactional (finding 7)
+- Acquires the FileLock. Pre-reads every entry's current state BEFORE
+  applying. Stops at the first failure and rolls back already-applied
+  entries. ok (RPC level) = all ok && all verified; otherwise ok:false +
+  rollback object. restored[] keeps per-entry ok/verified.
+
+## Backup manifest integrity — mandatory checksum + atomic writes (finding 8)
+- `verify_integrity`: when bytes is Some, `sha256` MUST be exactly 64 chars
+  of lowercase hex AND match the payload; empty/absent checksum = failure.
+- create_backup writes `<id>.json.tmp` + fsync + rename (same for
+  latest.json); any write failure → Err (fail closed).
+
+## probe — no false success (finding 9)
+- `ok = mtb_exists && mtb_executable && mtb_responds`, where mtb_responds
+  means running `mtb 0` yields ANY output OR exit 0 (a healthy binary
+  answers; SELinux/exec failures produce nothing). Add `"mtb_responds": bool`.
+- UI "Backend connected" requires res.ok && res.mtb_executable.
+
+CLI flags: `bandlock set [--lte ...] [--nrNsa ...] [--nrSa ...] [--allow-empty] [--slot N]` —
+missing category flag = untouched; present-empty needs --allow-empty.

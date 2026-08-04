@@ -367,18 +367,25 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         Err(e) => return json!({ "ok": false, "error": e }),
     };
 
-    // 1. Read current state of write paths for backup
+    // 1. Read current state of write paths for backup; if EfsRead::Error -> abort
+    let mut before_states: Vec<(String, Option<Vec<u8>>)> = Vec::new();
     let mut backup_entries = Vec::new();
+
     for w in feat.writes {
         let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
-        let before_hex = match parse_efs_read_output(exit, &raw) {
-            EfsRead::Present(b) => Some(bytes_to_hex(&b)),
-            EfsRead::Absent => None,
+        match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => {
+                before_states.push((w.path.to_string(), Some(b.clone())));
+                backup_entries.push(BackupEntry::new(slot, w.path.to_string(), Some(bytes_to_hex(&b))));
+            }
+            EfsRead::Absent => {
+                before_states.push((w.path.to_string(), None));
+                backup_entries.push(BackupEntry::new(slot, w.path.to_string(), None));
+            }
             EfsRead::Error(e) => {
                 return json!({ "ok": false, "error": format!("Read failed for {}: {}", w.path, e) });
             }
-        };
-        backup_entries.push(BackupEntry::new(slot, w.path.to_string(), before_hex));
+        }
     }
 
     // 2. Create backup
@@ -393,13 +400,20 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         }
     };
 
-    // 3. Write each path (one decimal byte per argv) + read-back verify
+    // 3. Write each path (one decimal byte per argv)
     let mut writes = Vec::new();
+    let mut write_failed = false;
+
     for w in feat.writes {
         let raw_bytes = match parse_space_dec(&w.bytes) {
             Ok(b) => b,
             Err(e) => {
-                return json!({ "ok": false, "error": format!("Bad feature payload for {}: {}", w.path, e) });
+                let rollback_obj = crate::util::perform_verified_rollback(slot, &before_states);
+                return json!({
+                    "ok": false,
+                    "error": format!("Bad feature payload for {}: {}", w.path, e),
+                    "rollback": rollback_obj
+                });
             }
         };
         let mut write_args: Vec<String> =
@@ -407,11 +421,14 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
         let (write_exit, _) = exec_mtb_owned(write_args);
         if write_exit != 0 {
-            return json!({
-                "ok": false,
-                "error": format!("Failed to write NV path {}", w.path)
-            });
+            write_failed = true;
         }
+    }
+
+    // 4. Re-read each & verify
+    let mut reread_failed = false;
+    for w in feat.writes {
+        let raw_bytes = parse_space_dec(&w.bytes).unwrap_or_default();
         let expected = bytes_to_hex(&raw_bytes);
         let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
         let r_read = parse_efs_read_output(r_exit, &r_raw);
@@ -419,12 +436,26 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
             EfsRead::Present(r_bytes) => bytes_to_hex(&r_bytes) == expected,
             _ => false,
         };
+        if !verified {
+            reread_failed = true;
+        }
         writes.push(json!({
             "path": w.path,
             "backup_id": backup.id,
             "expected": expected,
             "verified": verified
         }));
+    }
+
+    if write_failed || reread_failed {
+        let rollback_obj = crate::util::perform_verified_rollback(slot, &before_states);
+        return json!({
+            "ok": false,
+            "error": "feature disable failed, rolled back",
+            "id": id,
+            "writes": writes,
+            "rollback": rollback_obj
+        });
     }
 
     json!({
@@ -449,11 +480,22 @@ pub fn restore_feature(id: &str, slot: i32) -> Value {
         Err(e) => return json!({ "ok": false, "error": e }),
     };
 
-    // Look for backup
+    // Look for backup & pre-read before-state of target paths
     let backups_list = list_backups().unwrap_or_default();
-    let mut restored = Vec::new();
+    let mut before_states: Vec<(String, Option<Vec<u8>>)> = Vec::new();
+    let mut target_entries = Vec::new();
 
     for w in feat.writes {
+        // Read current state before restore
+        let (exit, raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+        match parse_efs_read_output(exit, &raw) {
+            EfsRead::Present(b) => before_states.push((w.path.to_string(), Some(b))),
+            EfsRead::Absent => before_states.push((w.path.to_string(), None)),
+            EfsRead::Error(e) => {
+                return json!({ "ok": false, "error": format!("Read failed for {}: {}", w.path, e) });
+            }
+        }
+
         // Find latest backup containing entry for this slot & path
         let mut target_entry: Option<BackupEntry> = None;
         for b_val in &backups_list {
@@ -479,21 +521,29 @@ pub fn restore_feature(id: &str, slot: i32) -> Value {
             return json!({ "ok": false, "error": format!("Integrity check failed: {}", err) });
         }
 
+        target_entries.push((w.path, entry));
+    }
+
+    let mut restored = Vec::new();
+    let mut write_failed = false;
+    let mut reread_failed = false;
+
+    for (path, entry) in target_entries {
         let (op, ok, verified) = match &entry.bytes {
             Some(hex_str) => {
                 if let Ok(raw_bytes) = parse_hex(hex_str) {
                     let mut write_args: Vec<String> =
-                        vec!["4".into(), "5".into(), slot.to_string(), w.path.to_string()];
+                        vec!["4".into(), "5".into(), slot.to_string(), path.to_string()];
                     write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
                     let (exit, _) = exec_mtb_owned(write_args);
                     if exit == 0 {
-                        let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+                        let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
                         let r_read = parse_efs_read_output(r_exit, &r_raw);
                         let v = match r_read {
                             EfsRead::Present(b) => bytes_to_hex(&b) == *hex_str,
                             _ => false,
                         };
-                        ("write", true, v)
+                        ("write", exit == 0 && v, v)
                     } else {
                         ("write", false, false)
                     }
@@ -502,25 +552,40 @@ pub fn restore_feature(id: &str, slot: i32) -> Value {
                 }
             }
             None => {
-                let (exit, _) = exec_mtb(&["4", "6", &slot.to_string(), w.path]);
+                let (exit, _) = exec_mtb(&["4", "6", &slot.to_string(), path]);
                 if exit == 0 {
-                    let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+                    let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
                     let r_read = parse_efs_read_output(r_exit, &r_raw);
                     let v = matches!(r_read, EfsRead::Absent);
-                    ("delete", true, v)
+                    ("delete", exit == 0 && v, v)
                 } else {
                     ("delete", false, false)
                 }
             }
         };
 
+        if !ok { write_failed = true; }
+        if !verified { reread_failed = true; }
+
         restored.push(json!({
-            "path": w.path,
+            "path": path,
             "op": op,
             "ok": ok,
             "verified": verified
         }));
     }
+
+    if write_failed || reread_failed {
+        let rollback_obj = crate::util::perform_verified_rollback(slot, &before_states);
+        return json!({
+            "ok": false,
+            "error": "feature restore failed, rolled back",
+            "id": id,
+            "restored": restored,
+            "rollback": rollback_obj
+        });
+    }
+
     json!({
         "ok": true,
         "id": id,

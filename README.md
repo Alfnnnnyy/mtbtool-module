@@ -46,14 +46,15 @@ does not ship it, the module refuses to install (customize.sh check).
    only happen when you press a button in the WebUI.
 2. **Backup before every write/delete.** A failed backup or a read error
    aborts the operation (read errors are never mistaken for "item absent").
-   Band lock and imports run as ONE transactional backup + apply with
-   automatic rollback on any failure.
+   Band lock, features, and imports run as ONE transactional backup + apply
+   with verified rollback on any failure — a partial state is never left.
 3. **Preview + two-step confirmation** for destructive changes.
 4. **Backend validation** — the WebUI can only call the fixed
    `mtbctl rpc --b64 <payload>` entry point: method allowlist, NV path
    allowlist, SIM slot bounds, hex/size caps, band-number validation, a
-   single-writer lock, and backup-before-write. No shell interpolation ever
-   reaches the backend. There is no network API — no daemon, no port, no HTTP.
+   single-writer lock, and backup-before-write. `ok` is only reported after
+   read-back verification. No shell interpolation ever reaches the backend.
+   There is no network API — no daemon, no port, no HTTP.
 5. **Emergency restore** — module menu action (volume-key confirmed)
    restores the latest backup; success is only reported when every item
    passes checksum verification and read-back comparison.

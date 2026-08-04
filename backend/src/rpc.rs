@@ -128,17 +128,21 @@ pub fn dispatch(method: &str, params: &Value) -> Value {
 
     match base.as_str() {
         "probe" => {
-            let (code, _) = exec_mtb(&["0"]);
+            let (code, raw) = exec_mtb(&["0"]);
             let mtb_bin = crate::mtb::get_mtb_bin();
             let mtb_exists = std::path::Path::new(&mtb_bin).exists();
+            let mtb_executable = mtb_exists && code == 0;
+            let mtb_responds = mtb_exists && (!raw.trim().is_empty() || code == 0);
+            let ok = mtb_exists && mtb_executable && mtb_responds;
             let model = crate::util::getprop("ro.product.model");
             let device = crate::util::getprop("ro.product.device");
             let sdk = crate::util::getprop("ro.build.version.sdk");
             json!({
-                "ok": true,
+                "ok": ok,
                 "mtb_path": mtb_bin,
                 "mtb_exists": mtb_exists,
-                "mtb_executable": code == 0,
+                "mtb_executable": mtb_executable,
+                "mtb_responds": mtb_responds,
                 "mtbctl_version": env!("CARGO_PKG_VERSION"),
                 "model": model,
                 "device": device,

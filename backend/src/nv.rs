@@ -102,16 +102,36 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
     };
 
     let expected = hex_str.to_lowercase();
-    let verified = write_exit == 0 && matches!(after_read, EfsRead::Present(_)) && bytes_to_hex(after_bytes).to_lowercase() == expected;
-    json!({
-        "ok": write_exit == 0,
-        "exit": write_exit,
-        "before": before_hex,
-        "after": bytes_to_hex(&after_bytes),
-        "expected": expected,
-        "verified": verified,
-        "backup": backup
-    })
+    let is_present = matches!(after_read, EfsRead::Present(_));
+    let verified = write_exit == 0 && is_present && bytes_to_hex(after_bytes).to_lowercase() == expected;
+
+    let ok = write_exit == 0 && verified;
+
+    if write_exit == 0 && !verified {
+        let before_bytes = before_hex.as_deref().and_then(|h| parse_hex(h).ok());
+        let rollback_before = vec![(path.to_string(), before_bytes)];
+        let rollback_obj = crate::util::perform_verified_rollback(slot, &rollback_before);
+        json!({
+            "ok": false,
+            "exit": write_exit,
+            "before": before_hex,
+            "after": if is_present { Some(bytes_to_hex(after_bytes)) } else { None },
+            "expected": expected,
+            "verified": false,
+            "rollback": rollback_obj,
+            "backup": backup
+        })
+    } else {
+        json!({
+            "ok": ok,
+            "exit": write_exit,
+            "before": before_hex,
+            "after": if is_present { Some(bytes_to_hex(after_bytes)) } else { None },
+            "expected": expected,
+            "verified": verified,
+            "backup": backup
+        })
+    }
 }
 
 pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
@@ -138,7 +158,7 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
     };
 
     let backup_reason = reason.unwrap_or("nv_delete");
-    let backup_entry = BackupEntry::new(slot, path.to_string(), before_hex);
+    let backup_entry = BackupEntry::new(slot, path.to_string(), before_hex.clone());
     let backup = match create_backup(backup_reason, vec![backup_entry]) {
         Ok(b) => b,
         Err(e) => {
@@ -151,14 +171,31 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
 
     // 2. Delete via mtb: 4 6 <slot> <path>
     let (del_exit, _) = exec_mtb(&["4", "6", &slot.to_string(), path]);
+
     // 3. Verify: item must be absent after delete
     let (v_exit, v_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
     let v_read = parse_efs_read_output(v_exit, &v_raw);
     let verified = del_exit == 0 && matches!(v_read, EfsRead::Absent);
-    json!({
-        "ok": del_exit == 0,
-        "exit": del_exit,
-        "verified": verified,
-        "backup": backup
-    })
+
+    let ok = del_exit == 0 && verified;
+
+    if del_exit == 0 && !verified {
+        let before_bytes = before_hex.as_deref().and_then(|h| parse_hex(h).ok());
+        let rollback_before = vec![(path.to_string(), before_bytes)];
+        let rollback_obj = crate::util::perform_verified_rollback(slot, &rollback_before);
+        json!({
+            "ok": false,
+            "exit": del_exit,
+            "verified": false,
+            "rollback": rollback_obj,
+            "backup": backup
+        })
+    } else {
+        json!({
+            "ok": ok,
+            "exit": del_exit,
+            "verified": verified,
+            "backup": backup
+        })
+    }
 }

@@ -3,11 +3,15 @@
 STORE="${FAKE_MTB_STORE:-/tmp/fakemtb/store}"
 key() { echo "$1|$2" | tr '/' '_'; }
 case "$1" in
+  0) echo "mtb version 1.0"; exit 0 ;;
   4)
     op="$2"; slot="$3"; path="$4"
     k=$(key "$slot" "$path")
     case "$op" in
       4) # read: tag per 16-byte line; absent => exit 0 empty (real modem behavior)
+        if [ -n "${FAKE_MTB_FAIL_PATH:-}" ] && [[ "$path" == *"$FAKE_MTB_FAIL_PATH"* ]]; then
+          exit 3
+        fi
         if [ -f "$STORE/$k" ]; then
           hex=$(cat "$STORE/$k")
           echo "$hex" | fold -w2 | while read -r b; do
@@ -20,6 +24,9 @@ case "$1" in
         shift 4
         hex=""
         for b in "$@"; do hex="$hex$(printf '%02x' "$b")"; done
+        if [ -n "${FAKE_MTB_FAIL_WRITE:-}" ] && [[ "$hex" == *"$FAKE_MTB_FAIL_WRITE"* ]]; then
+          hex="00"
+        fi
         printf '%s' "$hex" > "$STORE/$k"
         exit 0
         ;;

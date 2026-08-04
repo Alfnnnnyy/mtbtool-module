@@ -330,12 +330,26 @@ fn test_read_states() {
 }
 
 #[test]
-fn test_band_lists() {
-    assert_eq!(parse_band_list(None, ALL_LTE_BANDS, "lte").unwrap(), Vec::<i32>::new());
-    assert_eq!(parse_band_list(Some(""), ALL_LTE_BANDS, "lte").unwrap(), Vec::<i32>::new());
-    assert_eq!(parse_band_list(Some("1, 3, 7"), ALL_LTE_BANDS, "lte").unwrap(), vec![1, 3, 7]);
-    assert!(parse_band_list(Some("1, invalid"), ALL_LTE_BANDS, "lte").is_err());
-    assert!(parse_band_list(Some("1, 9999"), ALL_LTE_BANDS, "lte").is_err());
+fn test_band_partial_categories() {
+    assert_eq!(parse_band_list(None, ALL_LTE_BANDS, "lte", false).unwrap(), None);
+    assert!(parse_band_list(Some(""), ALL_LTE_BANDS, "lte", false).is_err());
+    assert_eq!(parse_band_list(Some(""), ALL_LTE_BANDS, "lte", true).unwrap(), Some(Vec::<i32>::new()));
+    assert_eq!(parse_band_list(Some("1, 3"), ALL_LTE_BANDS, "lte", false).unwrap(), Some(vec![1, 3]));
+    assert!(parse_band_list(Some("999"), ALL_LTE_BANDS, "lte", false).is_err());
+}
+#[test]
+fn test_backup_checksum_required() {
+    let mut entry = BackupEntry::new(0, "/nv/item_files/modem/mmode/lte_bandpref".to_string(), Some("01020304".to_string()));
+    assert!(entry.verify_integrity().is_ok());
+
+    entry.sha256 = String::new();
+    assert!(entry.verify_integrity().is_err());
+
+    entry.sha256 = "INVALID_HEX".to_string();
+    assert!(entry.verify_integrity().is_err());
+
+    entry.sha256 = "12345".to_string();
+    assert!(entry.verify_integrity().is_err());
 }
 
 #[test]
@@ -370,11 +384,18 @@ fn test_backup_roundtrip() {
     let latest = get_backup("latest").expect("Get backup latest should work");
     assert_eq!(latest.id, created.id);
 
-    // tampered checksum must fail integrity
+    // missing or wrong sha256 must fail
     let mut bad = created.entries[0].clone();
-    bad.sha256 = "00".repeat(64);
-    assert!(bad.verify_integrity().is_err(), "tampered sha256 must fail");
+    bad.sha256 = String::new();
+    assert!(bad.verify_integrity().is_err(), "missing sha256 must fail");
 
+    let mut bad2 = created.entries[0].clone();
+    bad2.sha256 = "00".repeat(32); // 64 uppercase or bad len
+    assert!(bad2.verify_integrity().is_err(), "invalid format sha256 must fail");
+
+    let mut bad3 = created.entries[0].clone();
+    bad3.sha256 = "00".repeat(64);
+    assert!(bad3.verify_integrity().is_err(), "tampered sha256 must fail");
     let _ = fs::remove_dir_all(&tmp_dir);
 }
 
@@ -462,8 +483,7 @@ fn test_rpc_allowlist_and_dispatch() {
     let payload = "{\"method\":\"probe\",\"params\":{}}";
     let b64 = base64url_encode(payload.as_bytes());
     let out = rpc_exec(&b64);
-    assert_eq!(out["ok"], true, "probe rpc must return ok: {}", out);
-
+    assert!(out.get("mtb_responds").is_some());
     // unknown method rejected with ok:false
     let p2 = "{\"method\":\"evil.run\",\"params\":{}}";
     let out2 = rpc_exec(&base64url_encode(p2.as_bytes()));

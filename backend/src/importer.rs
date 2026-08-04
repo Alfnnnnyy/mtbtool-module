@@ -179,12 +179,18 @@ pub fn import_apply(json_str: &str) -> Value {
         Err(e) => return json!({ "ok": false, "error": format!("Backup failed: {}", e) }),
     };
 
-    // 3. Write + verify each
+    // 3. Write + verify each in order; STOP on any failure & ROLLBACK
     let mut results = Vec::new();
     let mut ok_count = 0usize;
     let mut fail_count = 0usize;
+    let mut stopped_early = false;
 
-    for (cmd, _before_hex) in before_states {
+    // Track applied commands for rollback in reverse/order
+    let mut applied_commands: Vec<(ParsedImportCommand, Option<String>)> = Vec::new();
+
+    for (cmd, before_hex) in before_states {
+        applied_commands.push((cmd.clone(), before_hex.clone()));
+
         let (exit, ok, verified) = if cmd.op == "w" {
             if let Some(hex_bytes) = &cmd.bytes {
                 if let Ok(raw) = parse_hex(hex_bytes) {
@@ -193,7 +199,6 @@ pub fn import_apply(json_str: &str) -> Value {
                     write_args.extend(raw.iter().map(|b| b.to_string()));
                     let (code, _) = exec_mtb_owned(write_args);
                     if code == 0 {
-                        // read-back comparison
                         let expected = bytes_to_hex(&raw);
                         let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
                         let r_read = parse_efs_read_output(r_exit, &r_raw);
@@ -201,7 +206,7 @@ pub fn import_apply(json_str: &str) -> Value {
                             EfsRead::Present(r_bytes) => bytes_to_hex(&r_bytes) == expected,
                             _ => false,
                         };
-                        (code, true, v)
+                        (code, code == 0 && v, v)
                     } else {
                         (code, false, false)
                     }
@@ -214,17 +219,17 @@ pub fn import_apply(json_str: &str) -> Value {
         } else {
             let (code, _) = exec_mtb(&["4", "6", &cmd.slot.to_string(), &cmd.path]);
             if code == 0 {
-                // item must be absent after delete
                 let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
                 let r_read = parse_efs_read_output(r_exit, &r_raw);
                 let v = matches!(r_read, EfsRead::Absent);
-                (code, true, v)
+                (code, code == 0 && v, v)
             } else {
                 (code, false, false)
             }
         };
 
-        if ok {
+        let is_success = ok && verified;
+        if is_success {
             ok_count += 1;
         } else {
             fail_count += 1;
@@ -234,11 +239,73 @@ pub fn import_apply(json_str: &str) -> Value {
             "slot": cmd.slot,
             "op": cmd.op,
             "path": cmd.path,
-            "ok": ok,
+            "ok": is_success,
             "exit": exit,
             "verified": verified,
             "backup_id": backup.id.clone()
         }));
+
+        if !is_success {
+            stopped_early = true;
+            break;
+        }
+    }
+
+    if stopped_early {
+        let mut rollback_entries = Vec::new();
+        let mut all_rb_verified = true;
+
+        for (cmd, before_hex) in applied_commands.iter().rev() {
+            let before_bytes = before_hex.as_ref().and_then(|h| parse_hex(h).ok());
+            let (action, exit) = match &before_bytes {
+                Some(b) => {
+                    let mut write_args: Vec<String> =
+                        vec!["4".into(), "5".into(), cmd.slot.to_string(), cmd.path.clone()];
+                    write_args.extend(b.iter().map(|byte| byte.to_string()));
+                    let (code, _) = exec_mtb_owned(write_args);
+                    ("write", code)
+                }
+                None => {
+                    let (code, _) = exec_mtb(&["4", "6", &cmd.slot.to_string(), &cmd.path]);
+                    ("delete", code)
+                }
+            };
+
+            let (exit_after, raw_after) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
+            let verified = match parse_efs_read_output(exit_after, &raw_after) {
+                EfsRead::Present(bytes_after) => match &before_bytes {
+                    Some(b) => bytes_after == *b,
+                    None => false,
+                },
+                EfsRead::Absent => before_bytes.is_none(),
+                EfsRead::Error(_) => false,
+            };
+
+            if !verified {
+                all_rb_verified = false;
+            }
+
+            rollback_entries.push(json!({
+                "path": cmd.path,
+                "action": action,
+                "exit": exit,
+                "verified": verified
+            }));
+        }
+
+        let rollback_obj = json!({
+            "attempted": true,
+            "verified": all_rb_verified,
+            "entries": rollback_entries
+        });
+
+        return json!({
+            "ok": false,
+            "results": results,
+            "ok_count": ok_count,
+            "fail_count": fail_count,
+            "rollback": rollback_obj
+        });
     }
 
     json!({

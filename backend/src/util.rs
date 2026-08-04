@@ -37,6 +37,60 @@ pub fn validate_hex(hex_str: &str) -> Result<(), String> {
     }
     Ok(())
 }
+pub fn is_valid_sha256(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+}
+pub fn perform_verified_rollback(
+    slot: i32,
+    before_states: &[(String, Option<Vec<u8>>)],
+) -> serde_json::Value {
+    let mut entries = Vec::new();
+    let mut all_verified = true;
+
+    for (path, before) in before_states {
+        let (action, exit) = match before {
+            Some(b) => {
+                let mut write_args: Vec<String> =
+                    vec!["4".into(), "5".into(), slot.to_string(), path.clone()];
+                write_args.extend(b.iter().map(|byte| byte.to_string()));
+                let (code, _) = crate::mtb::exec_mtb_owned(write_args);
+                ("write", code)
+            }
+            None => {
+                let (code, _) = crate::mtb::exec_mtb(&["4", "6", &slot.to_string(), path]);
+                ("delete", code)
+            }
+        };
+
+        // Re-read to verify before-state restored
+        let (exit_after, raw_after) = crate::mtb::exec_mtb(&["4", "4", &slot.to_string(), path]);
+        let verified = match parse_efs_read_output(exit_after, &raw_after) {
+            EfsRead::Present(bytes_after) => match before {
+                Some(b) => bytes_after == *b,
+                None => false,
+            },
+            EfsRead::Absent => before.is_none(),
+            EfsRead::Error(_) => false,
+        };
+
+        if !verified {
+            all_verified = false;
+        }
+
+        entries.push(serde_json::json!({
+            "path": path,
+            "action": action,
+            "exit": exit,
+            "verified": verified
+        }));
+    }
+
+    serde_json::json!({
+        "attempted": true,
+        "verified": all_verified,
+        "entries": entries
+    })
+}
 
 pub fn parse_hex(hex_str: &str) -> Result<Vec<u8>, String> {
     validate_hex(hex_str)?;

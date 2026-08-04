@@ -6,6 +6,32 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-08-04
+
+### Security & reliability (audit round 3)
+- **Per-category band lock**: a band category that is not sent is left
+  untouched; an explicitly empty category requires `allowEmpty` + UI
+  confirmation — a single RAT can no longer be zeroed by accident.
+- **bandlock.get read errors are fatal**: `ok:false` when any NV read fails;
+  the UI blocks Apply until a clean read succeeds (failed reads can no longer
+  become zero masks).
+- **Verified rollback everywhere**: every multi-path operation (band lock,
+  features, import, restore, nv auto-restore) now reports
+  `rollback.{attempted, verified, entries[]}` with per-path read-back
+  verification — `rolled_back` only claims what was actually verified.
+- **`ok` means verified**: nv write/delete, import apply, feature
+  disable/restore, and restore only report `ok:true` when every operation
+  passed read-back comparison; nv write/delete auto-restores the backup on a
+  verification failure.
+- **Import stops + rolls back** at the first failed or unverified command.
+- **Emergency restore is exclusive + transactional**: FileLock, pre-restore
+  snapshot, stop-at-first-failure, rollback of already-applied entries.
+- **Backup integrity mandatory**: entries with bytes require a 64-char
+  lowercase hex SHA-256 (empty checksum = failure); backups are written
+  atomically (temp + fsync + rename), any write failure aborts the operation.
+- **Probe no false success**: `ok` now requires the mtb binary to exist, be
+  executable AND respond (SELinux/exec failures surface as warning).
+
 ## [1.0.2] - 2026-08-04
 
 ### Security & reliability (audit round 2)

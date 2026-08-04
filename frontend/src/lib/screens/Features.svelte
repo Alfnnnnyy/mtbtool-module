@@ -2,10 +2,16 @@
   import { rpc } from '../bridge';
   import { RefreshCw, Sliders, CheckCircle2, XCircle, HelpCircle, AlertOctagon } from 'lucide-svelte';
 
+  interface FeatureWriteResult {
+    path: string;
+    verified: boolean;
+  }
+
   interface FeatureItem {
     id: string;
     label: string;
     status: 'enabled' | 'disabled' | 'absent' | 'error';
+    writes?: FeatureWriteResult[];
     paths: Array<{
       path: string;
       absent: boolean;
@@ -13,6 +19,18 @@
     }>;
   }
 
+  interface RollbackInfo {
+    attempted: boolean;
+    verified: boolean;
+    entries?: Array<{ path: string; action: string; exit: number; verified: boolean }>;
+  }
+
+  interface FeatureRpcResult {
+    ok: boolean;
+    error?: string;
+    rollback?: RollbackInfo;
+    writes?: FeatureWriteResult[];
+  }
   let slot = $state<number>(0);
   let loading = $state<boolean>(false);
   let features = $state<FeatureItem[]>([]);
@@ -44,12 +62,15 @@
     loading = true;
     errorMsg = null;
     try {
-      if (feat.status === 'enabled') {
-        await rpc('features.disable', { id: feat.id, slot });
-      } else {
-        await rpc('features.restore', { id: feat.id, slot });
+      const method = feat.status === 'enabled' ? 'features.disable' : 'features.restore';
+      const res = await rpc(method, { id: feat.id, slot }) as FeatureRpcResult;
+      if (res && res.ok) {
+        await checkFeatures();
+      } else if (res && res.ok === false) {
+        let msg = res.error || `Failed to ${feat.status === 'enabled' ? 'disable' : 'restore'} feature ${feat.label}`;
+        if (res.rollback) msg += ' (rolled back)';
+        errorMsg = msg;
       }
-      await checkFeatures();
     } catch (e: unknown) {
       errorMsg = e instanceof Error ? e.message : String(e);
     } finally {

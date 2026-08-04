@@ -23,8 +23,23 @@
     errors?: string[];
   }
 
+  interface RollbackEntry {
+    path: string;
+    action: string;
+    exit: number;
+    verified: boolean;
+  }
+
+  interface RollbackInfo {
+    attempted: boolean;
+    verified: boolean;
+    entries?: RollbackEntry[];
+  }
+
   interface ImportApplyResult {
     ok: boolean;
+    error?: string;
+    rollback?: RollbackInfo;
     results?: Array<{
       slot: number;
       op: string;
@@ -55,6 +70,12 @@
   let readResult = $state<ReadNvResult | null>(null);
   let readError = $state<string | null>(null);
 
+  // Single NV write / delete state
+  let writeHex = $state('');
+  let singleActionLoading = $state(false);
+  let singleActionMsg = $state<string | null>(null);
+  let singleActionRollback = $state<RollbackInfo | null>(null);
+
   // Import section
   let jsonString = $state('');
   let importPreview = $state<ImportPreviewResult | null>(null);
@@ -81,6 +102,61 @@
       readError = e instanceof Error ? e.message : String(e);
     } finally {
       readLoading = false;
+    }
+  }
+  async function handleWriteNv() {
+    if (!writeHex.trim()) return;
+    singleActionLoading = true;
+    singleActionMsg = null;
+    singleActionRollback = null;
+    try {
+      const path = fullPath();
+      const res = await rpc('nv.write', { path, hex: writeHex, slot, reason: 'Single NV write' }) as { ok: boolean; verified?: boolean; error?: string; rollback?: RollbackInfo };
+      if (res && res.ok && res.verified) {
+        singleActionMsg = `NV write verified and applied successfully to ${path}`;
+        await handleReadNv();
+      } else if (res && res.ok === false) {
+        let msg = res.error || 'NV write failed';
+        if (res.rollback) {
+          msg += ' (rolled back)';
+          singleActionRollback = res.rollback;
+        }
+        singleActionMsg = msg;
+      } else {
+        singleActionMsg = `NV written but read-back verification FAILED for ${path}`;
+      }
+    } catch (e: unknown) {
+      singleActionMsg = `Write error: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      singleActionLoading = false;
+    }
+  }
+
+  async function handleDeleteNv() {
+    if (!confirm(`Are you sure you want to delete NV item '${fullPath()}' on slot ${slot}?`)) return;
+    singleActionLoading = true;
+    singleActionMsg = null;
+    singleActionRollback = null;
+    try {
+      const path = fullPath();
+      const res = await rpc('nv.delete', { path, slot, reason: 'Single NV delete' }) as { ok: boolean; verified?: boolean; error?: string; rollback?: RollbackInfo };
+      if (res && res.ok && res.verified) {
+        singleActionMsg = `NV item deleted and verified successfully at ${path}`;
+        await handleReadNv();
+      } else if (res && res.ok === false) {
+        let msg = res.error || 'NV delete failed';
+        if (res.rollback) {
+          msg += ' (rolled back)';
+          singleActionRollback = res.rollback;
+        }
+        singleActionMsg = msg;
+      } else {
+        singleActionMsg = `NV item deleted but verification FAILED at ${path}`;
+      }
+    } catch (e: unknown) {
+      singleActionMsg = `Delete error: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      singleActionLoading = false;
     }
   }
 
@@ -120,6 +196,11 @@
       const res = await rpc('import.apply', { json: jsonString }) as ImportApplyResult;
       importResults = res;
       importPreview = null;
+      if (res && res.ok === false) {
+        let msg = res.error || 'Import apply failed';
+        if (res.rollback) msg += ' (rolled back)';
+        importError = msg;
+      }
     } catch (e: unknown) {
       importError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -199,7 +280,43 @@
             {readLoading ? 'Reading...' : 'Read NV Path'}
           </button>
         </div>
+        </div>
+
+      <div class="section-label" style="margin-top: 16px;">SINGLE NV WRITE / DELETE</div>
+      <div class="field-group">
+        <label for="write-hex">Payload Hex (for Write):</label>
+        <input id="write-hex" type="text" class="input mono" bind:value={writeHex} placeholder="e.g. 01000000..." />
       </div>
+      <div class="row-flex" style="margin-top: 8px;">
+        <button class="btn btn-secondary" onclick={handleWriteNv} disabled={singleActionLoading || !writeHex.trim()}>
+          {singleActionLoading ? 'Writing...' : 'Write NV Item'}
+        </button>
+        <button class="btn btn-danger" onclick={handleDeleteNv} disabled={singleActionLoading}>
+          {singleActionLoading ? 'Deleting...' : 'Delete NV Item'}
+        </button>
+      </div>
+
+      {#if singleActionMsg}
+        <div class="card status-info-card" style="margin-top: 10px;">
+          <span>{singleActionMsg}</span>
+        </div>
+      {/if}
+
+      {#if singleActionRollback && singleActionRollback.entries}
+        <div class="card status-err-card" style="margin-top: 10px;">
+          <strong style="color: var(--danger);">Rollback Verification Details</strong>
+          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px;">
+            {#each singleActionRollback.entries as entry}
+              <div class="caption mono" style="display: flex; justify-content: space-between;">
+                <span>[{entry.action.toUpperCase()}] {entry.path}</span>
+                <span style={`color: ${entry.verified ? 'var(--success)' : 'var(--danger)'}`}>
+                  {entry.verified ? 'Verified OK' : 'Verified FALSE (Rollback Failed)'}
+                </span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       {#if readError}
         <div class="card status-err-card">{readError}</div>
@@ -282,20 +399,20 @@
 
       {#if importResults}
         {@const resList = importResults.results || []}
-        {@const verifiedCount = resList.filter(r => r.verified === true).length}
-        {@const unverifiedCount = resList.filter(r => r.verified === false).length}
+        {@const okAndVerifiedCount = resList.filter(r => r.ok && r.verified === true).length}
+        {@const failOrUnverifiedCount = resList.length - okAndVerifiedCount}
         <div class="card import-results">
           <div class="results-header">
-            <CheckCircle2 class="icon-success" />
+            <CheckCircle2 class={importResults.ok ? 'icon-success' : 'icon-fail'} />
             <strong style="color: var(--text-primary);">
-              Import Executed: {importResults.ok_count || 0} Success, {importResults.fail_count || 0} Failed ({verifiedCount} verified, {unverifiedCount} failed verification)
+              Import Summary: {okAndVerifiedCount} OK & Verified, {failOrUnverifiedCount} Failed / Unverified
             </strong>
           </div>
           <ul class="results-list">
             {#each resList as r}
-              <li class={r.ok ? (r.verified !== false ? 'res-ok' : 'res-warn') : 'res-fail'}>
+              <li class={r.ok && r.verified === true ? 'res-ok' : 'res-fail'}>
                 <span class="mono">[{r.op.toUpperCase()}] Slot {r.slot}: {r.path}</span>
-                <span class="caption">{r.ok ? (r.verified !== false ? 'Written & Verified' : 'Written (Read-back Unverified)') : `Failed (Exit ${r.exit})`}</span>
+                <span class="caption">{r.ok && r.verified === true ? 'OK & Verified' : `Failed (Exit ${r.exit}, Verified: ${r.verified ?? false})`}</span>
               </li>
             {/each}
           </ul>
