@@ -62,11 +62,7 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
 
     // 2. Backup before writing
     let backup_reason = reason.unwrap_or("nv_write");
-    let backup_entry = BackupEntry {
-        slot,
-        path: path.to_string(),
-        bytes: before_hex.clone(),
-    };
+    let backup_entry = BackupEntry::new(slot, path.to_string(), before_hex.clone());
     let backup = match create_backup(backup_reason, vec![backup_entry]) {
         Ok(b) => b,
         Err(e) => {
@@ -86,11 +82,15 @@ pub fn write_nv(path: &str, hex_str: &str, slot: i32, reason: Option<&str>) -> V
     let (after_exit, after_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
     let (_, after_bytes) = parse_efs_read_output(after_exit, &after_raw);
 
+    let expected = hex_str.to_lowercase();
+    let verified = write_exit == 0 && bytes_to_hex(&after_bytes).to_lowercase() == expected;
     json!({
         "ok": write_exit == 0,
         "exit": write_exit,
         "before": before_hex,
         "after": bytes_to_hex(&after_bytes),
+        "expected": expected,
+        "verified": verified,
         "backup": backup
     })
 }
@@ -110,11 +110,7 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
 
     // 1. Backup with null entry
     let backup_reason = reason.unwrap_or("nv_delete");
-    let backup_entry = BackupEntry {
-        slot,
-        path: path.to_string(),
-        bytes: None,
-    };
+    let backup_entry = BackupEntry::new(slot, path.to_string(), None);
     let backup = match create_backup(backup_reason, vec![backup_entry]) {
         Ok(b) => b,
         Err(e) => {
@@ -127,10 +123,14 @@ pub fn delete_nv(path: &str, slot: i32, reason: Option<&str>) -> Value {
 
     // 2. Delete via mtb: 4 6 <slot> <path>
     let (del_exit, _) = exec_mtb(&["4", "6", &slot.to_string(), path]);
-
+    // 3. Verify: item must be absent after delete
+    let (v_exit, v_raw) = exec_mtb(&["4", "4", &slot.to_string(), path]);
+    let (v_absent, v_bytes) = parse_efs_read_output(v_exit, &v_raw);
+    let verified = del_exit == 0 && v_absent && v_bytes.is_empty();
     json!({
         "ok": del_exit == 0,
         "exit": del_exit,
+        "verified": verified,
         "backup": backup
     })
 }

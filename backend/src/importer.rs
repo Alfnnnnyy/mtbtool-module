@@ -158,33 +158,44 @@ pub fn import_apply(json_str: &str) -> Value {
         let before_hex = if absent_before { None } else { Some(bytes_to_hex(&bytes_before)) };
 
         // Backup
-        let backup_entry = BackupEntry {
-            slot: cmd.slot,
-            path: cmd.path.clone(),
-            bytes: before_hex,
-        };
+        let backup_entry = BackupEntry::new(cmd.slot, cmd.path.clone(), before_hex);
         let backup_id = match create_backup("import_apply", vec![backup_entry]) {
             Ok(b) => b.id,
             Err(_) => "".to_string(),
         };
 
-        let (exit, ok) = if cmd.op == "w" {
+        let (exit, ok, verified) = if cmd.op == "w" {
             if let Some(hex_bytes) = &cmd.bytes {
                 if let Ok(raw) = parse_hex(hex_bytes) {
                     let mut write_args: Vec<String> =
                         vec!["4".into(), "5".into(), cmd.slot.to_string(), cmd.path.clone()];
                     write_args.extend(raw.iter().map(|b| b.to_string()));
                     let (code, _) = exec_mtb_owned(write_args);
-                    (code, code == 0)
+                    if code == 0 {
+                        // read-back comparison
+                        let expected = bytes_to_hex(&raw);
+                        let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
+                        let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
+                        (code, true, !absent && bytes_to_hex(&r_bytes) == expected)
+                    } else {
+                        (code, false, false)
+                    }
                 } else {
-                    (-1, false)
+                    (-1, false, false)
                 }
             } else {
-                (-1, false)
+                (-1, false, false)
             }
         } else {
             let (code, _) = exec_mtb(&["4", "6", &cmd.slot.to_string(), &cmd.path]);
-            (code, code == 0)
+            if code == 0 {
+                // item must be absent after delete
+                let (r_exit, r_raw) = exec_mtb(&["4", "4", &cmd.slot.to_string(), &cmd.path]);
+                let (absent, _) = parse_efs_read_output(r_exit, &r_raw);
+                (code, true, absent)
+            } else {
+                (code, false, false)
+            }
         };
 
         if ok {
@@ -199,6 +210,7 @@ pub fn import_apply(json_str: &str) -> Value {
             "path": cmd.path,
             "ok": ok,
             "exit": exit,
+            "verified": verified,
             "backup_id": backup_id
         }));
     }

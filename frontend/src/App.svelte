@@ -1,6 +1,6 @@
 <script lang="ts">
   import './lib/theme.css';
-  import { api } from './lib/bridge';
+  import { rpc } from './lib/bridge';
   import Dashboard from './lib/screens/Dashboard.svelte';
   import Bandlock from './lib/screens/Bandlock.svelte';
   import Features from './lib/screens/Features.svelte';
@@ -15,7 +15,7 @@
 
   async function checkStatus() {
     try {
-      const res = await api('probe') as { ok: boolean; model?: string };
+      const res = await rpc('probe') as { ok: boolean; model?: string };
       probeOk = res && res.ok;
       if (res && res.model) probeModel = res.model;
     } catch {

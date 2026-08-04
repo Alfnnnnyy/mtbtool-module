@@ -1,24 +1,107 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::mtb::{ensure_data_dir, exec_mtb, exec_mtb_owned};
-use crate::util::parse_hex;
+use crate::util::{bytes_to_hex, getprop, parse_efs_read_output, parse_hex, validate_nv_path};
+
+pub const BACKUP_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackupEntry {
     pub slot: i32,
     pub path: String,
+    /// Raw bytes as hex; `None` means the item was absent (delete-restore).
     pub bytes: Option<String>,
+    /// Byte count of the payload (0 when absent).
+    pub size: u64,
+    /// SHA-256 of the raw payload bytes, lowercase hex ("" when absent).
+    pub sha256: String,
+}
+
+impl BackupEntry {
+    pub fn new(slot: i32, path: String, bytes: Option<String>) -> Self {
+        match bytes {
+            Some(hex) => {
+                let raw = parse_hex(&hex).unwrap_or_default();
+                let size = raw.len() as u64;
+                let sha256 = hex_sha256(&raw);
+                BackupEntry { slot, path, bytes: Some(hex), size, sha256 }
+            }
+            None => BackupEntry {
+                slot,
+                path,
+                bytes: None,
+                size: 0,
+                sha256: String::new(),
+            },
+        }
+    }
+
+    /// Integrity check: hex valid, size matches, checksum matches (when payload present).
+    pub fn verify_integrity(&self) -> Result<(), String> {
+        validate_nv_path(&self.path)?;
+        match &self.bytes {
+            Some(hex) => {
+                let raw = parse_hex(hex)
+                    .map_err(|_| format!("Backup entry has invalid hex for {}", self.path))?;
+                if raw.len() as u64 != self.size {
+                    return Err(format!(
+                        "Backup entry size mismatch for {}: {} != {}",
+                        self.path,
+                        raw.len(),
+                        self.size
+                    ));
+                }
+                if !self.sha256.is_empty() && hex_sha256(&raw) != self.sha256 {
+                    return Err(format!("Backup entry checksum mismatch for {}", self.path));
+                }
+                Ok(())
+            }
+            None => {
+                if self.size != 0 {
+                    return Err(format!("Backup entry size mismatch (absent item) for {}", self.path));
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Backup {
+    pub version: u32,
     pub id: String,
     pub time: u64,
     pub reason: String,
+    pub device: String,
+    pub createdAt: String,
     pub entries: Vec<BackupEntry>,
+}
+
+fn hex_sha256(raw: &[u8]) -> String {
+    let digest = Sha256::digest(raw);
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+fn utc_now_iso() -> String {
+    if let Ok(out) = std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+    {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    // Fallback: epoch in ISO-ish form.
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("1970-01-01T00:00:00Z+{}s", ts)
 }
 
 pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, String> {
@@ -33,10 +116,14 @@ pub fn create_backup(reason: &str, entries: Vec<BackupEntry>) -> Result<Backup, 
 
     let safe_reason = reason.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
     let id = format!("{}_{}", now, safe_reason);
+
     let backup = Backup {
+        version: BACKUP_VERSION,
         id: id.clone(),
         time: now,
-        reason: reason.to_string(),
+        reason: safe_reason,
+        device: getprop("ro.product.device"),
+        createdAt: utc_now_iso(),
         entries,
     };
 
@@ -112,36 +199,62 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
         .map_err(|e| format!("Failed to parse backup JSON: {}", e))
 }
 
+/// Restore a backup. FAILS CLOSED: every entry is integrity-verified BEFORE
+/// any write happens; a single mismatch aborts with no partial restore.
 pub fn restore_backup(id: &str) -> Result<Vec<Value>, String> {
     let backup = get_backup(id)?;
-    let mut restored = Vec::new();
 
+    if backup.version != BACKUP_VERSION {
+        return Err(format!(
+            "Unsupported backup version {} (expected {})",
+            backup.version, BACKUP_VERSION
+        ));
+    }
+
+    // 1. Verify everything first — nothing is written until all checks pass.
     for entry in &backup.entries {
-        let (exit, ok) = if let Some(hex_bytes) = &entry.bytes {
-            if let Ok(raw_bytes) = parse_hex(hex_bytes) {
+        entry.verify_integrity()?;
+    }
+
+    // 2. Apply (each item write/delete, then read-back comparison).
+    let mut restored = Vec::new();
+    for entry in &backup.entries {
+        let (exit, ok, verified) = match &entry.bytes {
+            Some(hex_bytes) => {
+                let raw_bytes = parse_hex(hex_bytes)
+                    .map_err(|e| format!("Backup payload invalid for {}: {}", entry.path, e))?;
                 let mut write_args: Vec<String> =
                     vec!["4".into(), "5".into(), entry.slot.to_string(), entry.path.clone()];
                 write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
                 let (code, _) = exec_mtb_owned(write_args);
-                (code, code == 0)
-            } else {
-                (-1, false)
+                if code != 0 {
+                    (code, false, false)
+                } else {
+                    // read-back comparison
+                    let (r_exit, r_raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
+                    let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
+                    let verified = !absent && bytes_to_hex(&r_bytes) == *hex_bytes;
+                    (code, true, verified)
+                }
             }
-        } else {
-            let (code, _) = exec_mtb(&[
-                "4",
-                "6",
-                &entry.slot.to_string(),
-                &entry.path,
-            ]);
-            (code, code == 0)
+            None => {
+                let (code, _) = exec_mtb(&["4", "6", &entry.slot.to_string(), &entry.path]);
+                if code != 0 {
+                    (code, false, false)
+                } else {
+                    // item must be gone after delete
+                    let (r_exit, r_raw) = exec_mtb(&["4", "4", &entry.slot.to_string(), &entry.path]);
+                    let (absent, _) = parse_efs_read_output(r_exit, &r_raw);
+                    (code, true, absent)
+                }
+            }
         };
-
         restored.push(serde_json::json!({
             "slot": entry.slot,
             "path": entry.path,
             "ok": ok,
-            "exit": exit
+            "exit": exit,
+            "verified": verified
         }));
     }
 

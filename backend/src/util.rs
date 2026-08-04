@@ -107,3 +107,15 @@ pub fn parse_diag_response(raw: &str) -> Vec<u8> {
     }
     Vec::new()
 }
+
+/// Read an Android system property. Returns "unknown" when unavailable
+/// (e.g. host environments without getprop).
+pub fn getprop(name: &str) -> String {
+    match std::process::Command::new("getprop").arg(name).output() {
+        Ok(out) => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() { "unknown".to_string() } else { s }
+        }
+        Err(_) => "unknown".to_string(),
+    }
+}

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatHexByte, parseHexStringToBytes, formatBytesToHex, toggleSetItem } from './helpers';
-import { shellEscapeArg, buildCliCommand } from './bridge';
+import { encodeBase64Url } from './bridge';
 
 describe('helpers', () => {
   it('formats hex byte correctly', () => {
@@ -25,14 +25,46 @@ describe('helpers', () => {
   });
 });
 
-describe('bridge escaping', () => {
-  it('escapes shell args with single quotes', () => {
-    expect(shellEscapeArg('hello')).toBe("'hello'");
-    expect(shellEscapeArg("it's test")).toBe("'it'\"'\"'s test'");
+describe('encodeBase64Url', () => {
+  it('handles empty input', () => {
+    expect(encodeBase64Url('')).toBe('');
+    expect(encodeBase64Url(new Uint8Array([]))).toBe('');
   });
 
-  it('builds CLI command with escaped flags', () => {
-    const cmd = buildCliCommand('nv write', { path: '/nv/test', hex: '00' });
-    expect(cmd).toBe("nv write --path '/nv/test' --hex '00'");
+  it('encodes plain ascii string without padding or + / characters', () => {
+    const encoded = encodeBase64Url('hello world');
+    expect(encoded).toBe('aGVsbG8gd29ybGQ');
+    expect(encoded).not.toContain('=');
+    expect(encoded).not.toContain('+');
+    expect(encoded).not.toContain('/');
+  });
+
+  it('encodes binary data replacing + with - and / with _ and trimming padding =', () => {
+    // Uint8Array([0, 1, 2, 255, 254]) -> base64 AAEC//4= -> base64url AAEC--4
+    const bin = new Uint8Array([0, 1, 2, 255, 254]);
+    const encoded = encodeBase64Url(bin);
+    expect(encoded).toBe('AAEC__4');
+    expect(encoded).not.toContain('=');
+    expect(encoded).not.toContain('+');
+  });
+
+  it('encodes unicode strings correctly', () => {
+    const str = 'POCO F6 ⚡';
+    const encoded = encodeBase64Url(str);
+    expect(encoded).toBe('UE9DTyBGNiDimqE');
+    expect(encoded).not.toContain('=');
+  });
+
+  it('builds valid rpc payload json structure before encoding', () => {
+    const payload = { method: 'nv.write', params: { path: '/nv/item_files/modem/test', hex: '0102', slot: 0 } };
+    const jsonStr = JSON.stringify(payload);
+    const b64 = encodeBase64Url(jsonStr);
+    expect(b64).not.toContain('=');
+    expect(b64).not.toContain('+');
+    expect(b64).not.toContain('/');
+    
+    // Verify decoded json matches original
+    const decodedJson = Buffer.from(b64.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+    expect(JSON.parse(decodedJson)).toEqual(payload);
   });
 });

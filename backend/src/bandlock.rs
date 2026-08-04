@@ -319,7 +319,7 @@ pub fn set_bandlock(
         return json!({ "ok": false, "error": "No band parameters provided" });
     }
 
-    let mut writes = Vec::new();
+    let mut writes: Vec<Value> = Vec::new();
     let mut verified = serde_json::Map::new();
 
     for (path, new_bytes) in to_write {
@@ -328,11 +328,7 @@ pub fn set_bandlock(
         let (absent_before, bytes_before) = parse_efs_read_output(exit_before, &raw_before);
         let before_hex = if absent_before { None } else { Some(bytes_to_hex(&bytes_before)) };
 
-        let backup_entry = BackupEntry {
-            slot,
-            path: path.clone(),
-            bytes: before_hex,
-        };
+        let backup_entry = BackupEntry::new(slot, path.clone(), before_hex);
         let backup = match create_backup("bandlock_set", vec![backup_entry]) {
             Ok(b) => b,
             Err(e) => {
@@ -348,12 +344,16 @@ pub fn set_bandlock(
             return json!({ "ok": false, "error": format!("Failed to write NV path {}", path) });
         }
 
-        writes.push(json!({ "path": path, "backup_id": backup.id }));
-
-        // Verify re-read
+        let written_hex = bytes_to_hex(&new_bytes);
         let (exit_after, raw_after) = exec_mtb(&["4", "4", &slot.to_string(), &path]);
         let (_, bytes_after) = parse_efs_read_output(exit_after, &raw_after);
-        verified.insert(path, json!(bytes_to_hex(&bytes_after)));
+        verified.insert(
+            path,
+            json!({
+                "bytes": written_hex.clone(),
+                "match": bytes_to_hex(&bytes_after) == written_hex
+            }),
+        );
     }
 
     json!({

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { ShieldAlert, RefreshCw, Archive, Cpu, Smartphone, Folder, Activity, Radio, Sliders, Search, Zap } from 'lucide-svelte';
 
   interface ProbeResult {
@@ -34,10 +34,10 @@
     loading = true;
     error = null;
     try {
-      const res = await api('probe') as ProbeResult;
+      const res = await rpc('probe') as ProbeResult;
       probe = res;
 
-      const bRes = await api('backup list') as { ok: boolean; backups?: BackupItem[] };
+      const bRes = await rpc('backup.list') as { ok: boolean; backups?: BackupItem[] };
       if (bRes && bRes.backups && bRes.backups.length > 0) {
         latestBackup = bRes.backups[0];
       } else {
@@ -57,7 +57,7 @@
     restartingModem = true;
     modemResult = null;
     try {
-      const res = await api('modem restart') as { ok: boolean; exit?: number };
+      const res = await rpc('modem.restart') as { ok: boolean; exit?: number };
       modemResult = res.ok ? 'Modem restart initiated successfully.' : 'Failed to restart modem.';
     } catch (e: unknown) {
       modemResult = e instanceof Error ? e.message : String(e);

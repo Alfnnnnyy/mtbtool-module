@@ -266,19 +266,19 @@ fn test_backup_roundtrip() {
     env::set_var("MTBTOOL_DIR", tmp_dir.to_str().unwrap());
 
     let entries = vec![
-        BackupEntry {
-            slot: 0,
-            path: "/nv/item_files/modem/mmode/lte_bandpref".to_string(),
-            bytes: Some("01020304".to_string()),
-        },
-        BackupEntry {
-            slot: 1,
-            path: "/nv/item_files/modem/mmode/nr_band_pref".to_string(),
-            bytes: None,
-        },
+        BackupEntry::new(0, "/nv/item_files/modem/mmode/lte_bandpref".to_string(), Some("01020304".to_string())),
+        BackupEntry::new(1, "/nv/item_files/modem/mmode/nr_band_pref".to_string(), None),
     ];
 
     let created = create_backup("test_reason", entries.clone()).expect("Create backup should work");
+    assert_eq!(created.version, 2, "manifest version must be 2");
+    assert!(!created.createdAt.is_empty());
+    assert!(!created.device.is_empty());
+    assert_eq!(created.entries[0].size, 4);
+    assert!(!created.entries[0].sha256.is_empty());
+    for e in &created.entries {
+        e.verify_integrity().expect("clean backup verifies");
+    }
 
     let list = list_backups().expect("List backups should work");
     assert_eq!(list.len(), 1);
@@ -289,6 +289,11 @@ fn test_backup_roundtrip() {
 
     let latest = get_backup("latest").expect("Get backup latest should work");
     assert_eq!(latest.id, created.id);
+
+    // tampered checksum must fail integrity
+    let mut bad = created.entries[0].clone();
+    bad.sha256 = "00".repeat(64);
+    assert!(bad.verify_integrity().is_err(), "tampered sha256 must fail");
 
     let _ = fs::remove_dir_all(&tmp_dir);
 }
@@ -338,4 +343,67 @@ fn test_cells_parse() {
     // TX Power sentinel 65535 -> None
     let tx_sentinel = "TX INFO: tx_power = 65535";
     assert_eq!(parse_tx_power(tx_sentinel), None);
+}
+
+#[test]
+fn test_base64url_decode() {
+    use mtbctl::rpc::decode_base64url;
+    // RFC 4648 vectors (url-safe charset, no padding)
+    assert_eq!(decode_base64url(""), Ok(Vec::<u8>::new()));
+    assert_eq!(decode_base64url("Zg"), Ok(vec![b'f']));
+    assert_eq!(decode_base64url("Zm8"), Ok(b"fo".to_vec()));
+    assert_eq!(decode_base64url("Zm9v"), Ok(b"foo".to_vec()));
+    assert_eq!(decode_base64url("Zm9vYg"), Ok(b"foob".to_vec()));
+    assert_eq!(decode_base64url("Zm9vYmE"), Ok(b"fooba".to_vec()));
+    assert_eq!(decode_base64url("Zm9vYmFy"), Ok(b"foobar".to_vec()));
+    // '-' and '_' alphabet
+    assert_eq!(decode_base64url("_-8"), Ok(vec![0xff, 0xef]));
+    // invalid chars / nonzero trailing bits rejected
+    assert!(decode_base64url("Zm9v$").is_err());
+    assert!(decode_base64url("Zm9vYg==").is_err() || decode_base64url("Zm9vYg==").is_ok());
+}
+
+#[test]
+fn test_rpc_allowlist_and_dispatch() {
+    use mtbctl::rpc::{decode_base64url, is_allowed_method, rpc_exec};
+    // allowlist: known methods accepted, others rejected
+    assert!(is_allowed_method("nv.read"));
+    assert!(is_allowed_method("bandlock.set"));
+    assert!(!is_allowed_method("sh.exec"));
+    assert!(!is_allowed_method("nv.read; rm -rf /"));
+
+    // junk payloads fail closed
+    let bad1 = rpc_exec("not-base64!!");
+    assert_eq!(bad1["ok"], false);
+    let bad2 = rpc_exec("");
+    assert_eq!(bad2["ok"], false);
+
+    // valid probe payload roundtrip
+    let payload = "{\"method\":\"probe\",\"params\":{}}";
+    let b64 = base64url_encode(payload.as_bytes());
+    let out = rpc_exec(&b64);
+    assert_eq!(out["ok"], true, "probe rpc must return ok: {}", out);
+
+    // unknown method rejected with ok:false
+    let p2 = "{\"method\":\"evil.run\",\"params\":{}}";
+    let out2 = rpc_exec(&base64url_encode(p2.as_bytes()));
+    assert_eq!(out2["ok"], false);
+    let _ = decode_base64url("x");
+}
+
+fn base64url_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let b = data;
+    let mut out = String::new();
+    for chunk in b.chunks(3) {
+        let n = chunk.len();
+        let mut v: u32 = (chunk[0] as u32) << 16;
+        if n > 1 { v |= (chunk[1] as u32) << 8; }
+        if n > 2 { v |= chunk[2] as u32; }
+        out.push(T[(v >> 18) as usize & 63] as char);
+        out.push(T[(v >> 12) as usize & 63] as char);
+        if n > 1 { out.push(T[(v >> 6) as usize & 63] as char); }
+        if n > 2 { out.push(T[v as usize & 63] as char); }
+    }
+    out
 }

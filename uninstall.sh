@@ -6,11 +6,5 @@
 MODDIR=${0%/*}
 DATA_DIR=/data/adb/mtbtool
 
-# stop the HTTP bridge if running
-if [ -f "$DATA_DIR/serve.pid" ]; then
-    kill "$(cat "$DATA_DIR/serve.pid")" 2>/dev/null
-    rm -f "$DATA_DIR/serve.pid"
-fi
-
 echo "MTB Tool uninstalled."
 echo "Backups kept at $DATA_DIR (delete manually to wipe)."

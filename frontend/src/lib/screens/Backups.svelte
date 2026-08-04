@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { Archive, RefreshCw, AlertTriangle, RotateCcw } from 'lucide-svelte';
 
   interface BackupEntry {
@@ -23,6 +23,7 @@
       path: string;
       ok: boolean;
       exit: number;
+      verified?: boolean;
     }>;
   }
 
@@ -39,7 +40,7 @@
     loading = true;
     statusMsg = null;
     try {
-      const res = await api('backup list') as { ok: boolean; backups?: BackupItem[] };
+      const res = await rpc('backup.list') as { ok: boolean; backups?: BackupItem[] };
       if (res && res.backups) {
         backups = res.backups;
       }
@@ -57,9 +58,15 @@
     restoringId = id;
     statusMsg = null;
     try {
-      const res = await api(`backup restore ${id}`) as RestoreResult;
+      const res = await rpc('backup.restore', { id }) as RestoreResult;
       if (res && res.ok) {
-        statusMsg = `Backup '${id}' successfully restored to modem!`;
+        const restoredList = res.restored || [];
+        const allVerified = restoredList.length > 0 && restoredList.every(r => r.verified === true);
+        if (allVerified) {
+          statusMsg = `Backup '${id}' successfully restored and verified on modem!`;
+        } else {
+          statusMsg = `Backup '${id}' restored but read-back verification FAILED for one or more items`;
+        }
       }
     } catch (e: unknown) {
       statusMsg = `Restore error: ${e instanceof Error ? e.message : String(e)}`;
@@ -72,10 +79,17 @@
     emergencyConfirming = true;
     statusMsg = null;
     try {
-      const res = await api('backup restore latest') as RestoreResult;
+      const res = await rpc('backup.restore', { id: 'latest' }) as RestoreResult;
       if (res && res.ok) {
-        statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup payload rewritten to modem!';
+        const restoredList = res.restored || [];
+        const allVerified = restoredList.length > 0 && restoredList.every(r => r.verified === true);
+        if (allVerified) {
+          statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup payload rewritten and verified on modem!';
+        } else {
+          statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup rewritten, but read-back verification FAILED for some items';
+        }
         showEmergencyModal = false;
+        await loadBackups();
       }
     } catch (e: unknown) {
       statusMsg = `Emergency restore error: ${e instanceof Error ? e.message : String(e)}`;

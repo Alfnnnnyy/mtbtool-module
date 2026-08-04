@@ -95,7 +95,7 @@ jobs:
       - name: Package module zip
         run: |
           ZIP="MTB-Tool-${{ steps.ver.outputs.VN }}.zip"
-          zip -r9 "$ZIP" module.prop customize.sh service.sh action.sh uninstall.sh bin webroot LICENSE -x '.*'
+          zip -r9 "$ZIP" module.prop customize.sh action.sh uninstall.sh bin webroot LICENSE -x '.*'
           sha256sum "$ZIP" > "$ZIP.sha256"
           unzip -l "$ZIP"
           echo "ZIP=$ZIP" >> "$GITHUB_ENV"

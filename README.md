@@ -16,8 +16,8 @@ does not ship it, the module refuses to install (customize.sh check).
 | | |
 |---|---|
 | **WebUI** | Svelte 5 + TypeScript + Vite, Linear-inspired dark theme (see [frontend/DESIGN.md](frontend/DESIGN.md)) |
-| **Backend** | `mtbctl` — single Rust binary (validation, backups, masking, HTTP bridge) |
-| **Root** | KernelSU (native WebUI `exec`) · Magisk (WebUI host / localhost HTTP bridge / `action.sh`) |
+| **Backend** | `mtbctl` — single Rust binary (validation, backups, masking, RPC) |
+| **Root** | KernelSU (native WebUI `exec`) · Magisk (WebUI host with exec bridge, e.g. WebUI X) |
 | **Storage** | `/data/adb/mtbtool` (config + backups) |
 | **Target** | POCO F6 (HyperOS, Qualcomm modem), Android 13+, arm64 |
 
@@ -46,9 +46,11 @@ does not ship it, the module refuses to install (customize.sh check).
    only happen when you press a button in the WebUI.
 2. **Backup before every write/delete.** A failed backup aborts the operation.
 3. **Preview + two-step confirmation** for destructive changes.
-4. **Backend validation** — `mtbctl` enforces an NV path allowlist, SIM slot
-   bounds, hex/size caps, band-number validation and a single-writer lock.
-   A tampered WebUI cannot write arbitrary EFS paths.
+4. **Backend validation** — the WebUI can only call the fixed
+   `mtbctl rpc --b64 <payload>` entry point: method allowlist, NV path
+   allowlist, SIM slot bounds, hex/size caps, band-number validation, a
+   single-writer lock, and backup-before-write. No shell interpolation ever
+   reaches the backend. There is no network API — no daemon, no port, no HTTP.
 5. **Emergency restore** — module menu action restores the latest backup.
 6. Wrong band masks can cause connectivity loss until restored; the backups tab
    is your undo button.
@@ -67,9 +69,8 @@ does not ship it, the module refuses to install (customize.sh check).
    storage, or Magisk → modules → install from storage).
 3. Open the module's **WebUI**:
    - KernelSU/ReSukiSU/APatch: native module WebUI button.
-   - Magisk: use a WebUI host, or a WebView pointed at
-     `http://127.0.0.1:28082` (the module starts a localhost bridge in
-     `service.sh`). Terminal users can run the module's action script.
+   - Magisk: use a WebUI host that provides a controlled exec bridge
+     (e.g. **WebUI X**). Terminal users can run the module's action script.
 4. Dashboard shows the compatibility probe; if `/vendor/bin/mtb` is missing
    the module refuses to install in the first place.
 
@@ -109,7 +110,7 @@ All builds run in GitHub Actions (no local toolchain needed for release):
 
 ```mermaid
 flowchart LR
-    W[WebUI Svelte 5] -->|exec / HTTP| B[mtbctl Rust]
+    W[WebUI Svelte 5] -->|exec rpc --b64| B[mtbctl Rust]
     B -->|validation + backup + lock| M[/vendor/bin/mtb/]
     M --> E[EFS NV modem]
     B --> D[/data/adb/mtbtool/]
@@ -119,13 +120,13 @@ flowchart LR
 
 ```
 ├── app/            # original Android app (reference, not built)
-├── backend/        # mtbctl — Rust CLI + HTTP bridge
+├── backend/        # mtbctl — Rust CLI + RPC layer
 ├── frontend/       # Svelte 5 WebUI source (built only in GA → webroot/)
 │   └── DESIGN.md   # MTB Control design system (Linear-inspired)
 ├── docs/design-md/ # vendored design references (VoltAgent/awesome-design-md)
 ├── bin/            # release artifact (gitignored)
 ├── webroot/        # WebUI build output (gitignored, built by GA)
-├── module.prop / customize.sh / service.sh / action.sh / uninstall.sh
+├── module.prop / customize.sh / action.sh / uninstall.sh
 ├── tools/          # original import tools (nv_import_tool.py, format docs)
 └── .github/workflows/  # ci.yml (tests) + release.yml (auto-release)
 ```

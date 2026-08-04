@@ -21,29 +21,28 @@ else
 fi
 
 # --- required vendor binary ---
-if [ ! -x "$MTB" ]; then
-    ui_print "! ERROR: $MTB not found or not executable."
-    ui_print "! This device does not expose the Qualcomm MTB tool."
-    ui_print "! Installation aborted — no changes were made."
-    exit 1
-fi
+[ -x "$MTB" ] || abort "! ERROR: $MTB not found or not executable. This device does not expose the Qualcomm MTB tool. Installation aborted — no changes were made."
 ui_print "- Found $MTB"
 
 # --- data dir ---
-mkdir -p "$DATA_DIR/backups" 2>/dev/null || {
-    ui_print "! ERROR: cannot create $DATA_DIR"
-    exit 1
-}
+mkdir -p "$DATA_DIR/backups" 2>/dev/null || abort "! ERROR: cannot create $DATA_DIR"
 chmod 0700 "$DATA_DIR"
 ui_print "- Data dir ready: $DATA_DIR"
 
-# --- cleanup stale runtime files ---
-rm -f "$DATA_DIR/serve.pid" "$DATA_DIR/.lock"
-
-set_perm_recursive $MODPATH 0 0 0755 0644
+# --- permissions: executables only ---
+# KSU/APatch set webroot perms + SELinux context themselves, so we never touch
+# webroot; Magisk needs the scripts and binary executable.
+[ -n "$KSU" ] || [ -n "$APATCH" ] && ui_print "- KernelSU/APatch: webroot handled by manager"
 set_perm $MODPATH/bin/mtbctl 0 0 0755
-set_perm $MODPATH/service.sh 0 0 0755
 set_perm $MODPATH/action.sh 0 0 0755
+set_perm $MODPATH/uninstall.sh 0 0 0755
+
+# --- runtime probe (read-only) ---
+"$MODPATH/bin/mtbctl" probe >/dev/null 2>&1 || abort "! ERROR: mtbctl failed its read-only compatibility probe."
+ui_print "- mtbctl probe OK"
+
+# --- cleanup stale runtime files ---
+rm -f "$DATA_DIR/.lock"
 
 ui_print "- Installed. Open the module WebUI to manage EFS NV items."
 ui_print "- Emergency restore: module menu (action.sh) or WebUI Backups tab."

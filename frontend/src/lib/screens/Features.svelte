@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { RefreshCw, Sliders, CheckCircle2, XCircle, HelpCircle, AlertOctagon } from 'lucide-svelte';
 
   interface FeatureItem {
@@ -29,7 +29,7 @@
     loading = true;
     errorMsg = null;
     try {
-      const res = await api('features check', { slot: String(slot) }) as { ok: boolean; features?: FeatureItem[] };
+      const res = await rpc('features.check', { slot }) as { ok: boolean; features?: FeatureItem[] };
       if (res && res.features) {
         features = res.features;
       }
@@ -45,9 +45,9 @@
     errorMsg = null;
     try {
       if (feat.status === 'enabled') {
-        await api(`features disable ${feat.id}`, { slot: String(slot) });
+        await rpc('features.disable', { id: feat.id, slot });
       } else {
-        await api(`features restore ${feat.id}`, { slot: String(slot) });
+        await rpc('features.restore', { id: feat.id, slot });
       }
       await checkFeatures();
     } catch (e: unknown) {
@@ -61,7 +61,7 @@
     nrModeLoading = true;
     nrModeMsg = null;
     try {
-      const res = await api(`nv read ${NR_MODE_PATH}`, { slot: String(slot) }) as { ok: boolean; bytes?: string; absent?: boolean };
+      const res = await rpc('nv.read', { path: NR_MODE_PATH, slot }) as { ok: boolean; bytes?: string; absent?: boolean };
       if (res && res.bytes) {
         const val = parseInt(res.bytes, 16);
         if (!isNaN(val)) {
@@ -80,9 +80,13 @@
     nrModeMsg = null;
     try {
       const hexVal = newMode.toString(16).padStart(2, '0');
-      await api(`nv write ${NR_MODE_PATH} ${hexVal}`, { slot: String(slot), reason: 'NR mode set' });
+      const res = await rpc('nv.write', { path: NR_MODE_PATH, hex: hexVal, slot, reason: 'NR mode set' }) as { ok: boolean; verified?: boolean };
       nrMode = newMode;
-      nrModeMsg = 'NR 5G disable mode updated successfully.';
+      if (res && res.verified === false) {
+        nrModeMsg = 'NR 5G disable mode written but read-back verification failed — check Backups';
+      } else {
+        nrModeMsg = 'NR 5G disable mode written and verified successfully.';
+      }
     } catch (e: unknown) {
       nrModeMsg = `Write error: ${e instanceof Error ? e.message : String(e)}`;
     } finally {

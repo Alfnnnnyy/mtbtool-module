@@ -60,17 +60,21 @@ check "slot bounds reject" "echo '$out' | grep -q 'Invalid slot'"
 out=$("$BIN" backup restore latest)
 check "emergency restore latest" "echo '$out' | grep -q '\"ok\":true'"
 
-# --- HTTP bridge (serve) ---
-"$BIN" serve --port 28088 >"$WORK/serve.log" 2>&1 &
-SVPID=$!
-sleep 1
-h=$(curl -s http://127.0.0.1:28088/health)
-check "http health" "echo '$h' | grep -q 'ok'"
-a=$(curl -s -X POST http://127.0.0.1:28088/api -d '{"cmd":"backup restore latest","args":{}}')
-check "http subcommand tail" "echo '$a' | grep -q 'ok'"
-b=$(curl -s -X POST http://127.0.0.1:28088/api -d '{"cmd":"bandlock set","args":{"lte":"1,3","slot":"1"}}')
-check "http string slot accepted" "echo '$b' | grep -q 'lte_bandpref_Subscription01'"
-kill $SVPID 2>/dev/null; wait $SVPID 2>/dev/null || true
+# --- RPC bridge (mtbctl rpc --b64) ---
+b64url() { python3 -c "import base64,sys; print(base64.urlsafe_b64encode(sys.stdin.buffer.read()).rstrip(b'=').decode())"; }
+p=$(printf '%s' '{"method":"probe","params":{}}' | b64url)
+out=$("$BIN" rpc --b64 "$p")
+check "rpc probe" "echo '$out' | grep -q '\"ok\":true'"
+p2=$(printf '%s' '{"method":"nv.read","params":{"path":"/nv/item_files/modem/mmode/lte_bandpref","slot":0}}' | b64url)
+out=$("$BIN" rpc --b64 "$p2")
+check "rpc nv.read" "echo '$out' | grep -q '\"ok\":true'"
+p3=$(printf '%s' '{"method":"evil.run","params":{}}' | b64url)
+out=$("$BIN" rpc --b64 "$p3")
+check "rpc unknown method rejected" "echo '$out' | grep -q 'Unknown RPC method'"
+out=$("$BIN" rpc --b64 'notbase64!!')
+check "rpc junk rejected" "echo '$out' | grep -q 'rpc decode'"
+out=$("$BIN" rpc --b64 "$(printf '%s' '{"method":"nv.write","params":{"path":"/data/x","hex":"00","slot":0}}' | b64url)")
+check "rpc path allowlist enforced" "echo '$out' | grep -q 'does not match allowed NV prefixes'"
 
 echo
 [ "$fail" = "0" ] && echo "ALL SMOKE TESTS PASSED" || { echo "SMOKE FAILURES"; exit 1; }

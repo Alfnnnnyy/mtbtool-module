@@ -3,7 +3,7 @@ pub mod bandlock;
 pub mod cells;
 pub mod config;
 pub mod features;
-pub mod http;
+pub mod rpc;
 pub mod importer;
 pub mod mtb;
 pub mod nv;

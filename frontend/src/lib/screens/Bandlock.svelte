@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { ALL_LTE_BANDS, ALL_NR_BANDS, toggleSetItem } from '../helpers';
   import { Radio, RefreshCw, AlertTriangle, ShieldCheck, CheckSquare, Square } from 'lucide-svelte';
 
@@ -61,7 +61,7 @@
     loading = true;
     statusMsg = null;
     try {
-      const getRes = await api('bandlock get', { slot: String(slot) }) as BandlockGetResult;
+      const getRes = await rpc('bandlock.get', { slot }) as BandlockGetResult;
       if (getRes && getRes.bands) {
         selectedLte = new Set(getRes.bands.lte || []);
         selectedNrNsa = new Set(getRes.bands.nrNsa || []);
@@ -90,7 +90,7 @@
     loading = true;
     statusMsg = null;
     try {
-      const res = await api('bandlock detect') as { ok: boolean; lte?: number[]; nrNsa?: number[]; nrSa?: number[]; raw_byte_count?: number };
+      const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; lte?: number[]; nrNsa?: number[]; nrSa?: number[]; raw_byte_count?: number };
       if (res && res.ok) {
         selectedLte = new Set(res.lte || []);
         selectedNrNsa = new Set(res.nrNsa || []);
@@ -135,15 +135,22 @@
       const nrNsaStr = Array.from(selectedNrNsa).join(',');
       const nrSaStr = Array.from(selectedNrSa).join(',');
 
-      const res = await api('bandlock set', {
-        slot: String(slot),
+      const res = await rpc('bandlock.set', {
+        slot,
         lte: lteStr,
         nrNsa: nrNsaStr,
         nrSa: nrSaStr
-      }) as { ok: boolean };
+      }) as { ok: boolean; verified?: Record<string, { bytes: string; match: boolean }> };
 
       if (res && res.ok) {
-        statusMsg = 'Bandlock NV write verified and applied successfully!';
+        const verifiedMap = res.verified || {};
+        const verifiedEntries = Object.values(verifiedMap);
+        const allVerified = verifiedEntries.length > 0 && verifiedEntries.every(v => v.match === true);
+        if (allVerified) {
+          statusMsg = 'Bandlock NV write verified and applied successfully!';
+        } else {
+          statusMsg = 'Bandlock NV written but read-back verification FAILED — check Backups and restore if needed';
+        }
         showConfirm = false;
         await loadBands();
       }
@@ -157,7 +164,7 @@
   async function handleRestartModem() {
     if (!confirm('Restart modem hardware now? Cellular connection will reset.')) return;
     try {
-      await api('modem restart');
+      await rpc('modem.restart');
       statusMsg = 'Modem restart signal issued successfully.';
     } catch (e: unknown) {
       statusMsg = `Restart error: ${e instanceof Error ? e.message : String(e)}`;

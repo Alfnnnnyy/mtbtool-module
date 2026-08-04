@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::backup::{create_backup, list_backups, Backup, BackupEntry};
 use crate::mtb::{exec_mtb, exec_mtb_owned, FileLock};
 use crate::util::{
-    bytes_to_hex, parse_efs_read_output, parse_hex, validate_slot,
+    bytes_to_hex, parse_efs_read_output, parse_hex, parse_space_dec, validate_slot,
 };
 
 pub struct NvWriteDef {
@@ -369,11 +369,7 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         } else {
             Some(bytes_to_hex(&bytes))
         };
-        backup_entries.push(BackupEntry {
-            slot,
-            path: w.path.to_string(),
-            bytes: before_hex,
-        });
+        backup_entries.push(BackupEntry::new(slot, w.path.to_string(), before_hex));
     }
 
     // 2. Create backup
@@ -388,19 +384,34 @@ pub fn disable_feature(id: &str, slot: i32) -> Value {
         }
     };
 
-    // 3. Write each path
+    // 3. Write each path (one decimal byte per argv) + read-back verify
     let mut writes = Vec::new();
     for w in feat.writes {
-        let (write_exit, _) = exec_mtb(&["4", "5", &slot.to_string(), w.path, w.bytes]);
+        let raw_bytes = match parse_space_dec(&w.bytes) {
+            Ok(b) => b,
+            Err(e) => {
+                return json!({ "ok": false, "error": format!("Bad feature payload for {}: {}", w.path, e) });
+            }
+        };
+        let mut write_args: Vec<String> =
+            vec!["4".into(), "5".into(), slot.to_string(), w.path.to_string()];
+        write_args.extend(raw_bytes.iter().map(|b| b.to_string()));
+        let (write_exit, _) = exec_mtb_owned(write_args);
         if write_exit != 0 {
             return json!({
                 "ok": false,
                 "error": format!("Failed to write NV path {}", w.path)
             });
         }
+        let expected = bytes_to_hex(&raw_bytes);
+        let (r_exit, r_raw) = exec_mtb(&["4", "4", &slot.to_string(), w.path]);
+        let (absent, r_bytes) = parse_efs_read_output(r_exit, &r_raw);
+        let verified = !absent && bytes_to_hex(&r_bytes) == expected;
         writes.push(json!({
             "path": w.path,
-            "backup_id": backup.id
+            "backup_id": backup.id,
+            "expected": expected,
+            "verified": verified
         }));
     }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { FileCode, Upload, Search, CheckCircle2, AlertCircle } from 'lucide-svelte';
 
   interface ReadNvResult {
@@ -32,9 +32,12 @@
       ok: boolean;
       exit: number;
       backup_id?: string;
+      verified?: boolean;
     }>;
     ok_count?: number;
     fail_count?: number;
+    verified_count?: number;
+    unverified_count?: number;
   }
 
   const BASE_PATHS = [
@@ -72,7 +75,7 @@
     readError = null;
     try {
       const path = fullPath();
-      const res = await api(`nv read ${path}`, { slot: String(slot) }) as ReadNvResult;
+      const res = await rpc('nv.read', { path, slot }) as ReadNvResult;
       readResult = res;
     } catch (e: unknown) {
       readError = e instanceof Error ? e.message : String(e);
@@ -102,7 +105,7 @@
     importError = null;
     importResults = null;
     try {
-      const res = await api('import preview', { json: jsonString }) as ImportPreviewResult;
+      const res = await rpc('import.preview', { json: jsonString }) as ImportPreviewResult;
       importPreview = res;
     } catch (e: unknown) {
       importError = e instanceof Error ? e.message : String(e);
@@ -114,7 +117,7 @@
     importApplying = true;
     importError = null;
     try {
-      const res = await api('import apply', { json: jsonString }) as ImportApplyResult;
+      const res = await rpc('import.apply', { json: jsonString }) as ImportApplyResult;
       importResults = res;
       importPreview = null;
     } catch (e: unknown) {
@@ -278,18 +281,21 @@
       {/if}
 
       {#if importResults}
+        {@const resList = importResults.results || []}
+        {@const verifiedCount = resList.filter(r => r.verified === true).length}
+        {@const unverifiedCount = resList.filter(r => r.verified === false).length}
         <div class="card import-results">
           <div class="results-header">
             <CheckCircle2 class="icon-success" />
             <strong style="color: var(--text-primary);">
-              Import Executed: {importResults.ok_count} Success, {importResults.fail_count} Failed
+              Import Executed: {importResults.ok_count || 0} Success, {importResults.fail_count || 0} Failed ({verifiedCount} verified, {unverifiedCount} failed verification)
             </strong>
           </div>
           <ul class="results-list">
-            {#each importResults.results || [] as r}
-              <li class={r.ok ? 'res-ok' : 'res-fail'}>
+            {#each resList as r}
+              <li class={r.ok ? (r.verified !== false ? 'res-ok' : 'res-warn') : 'res-fail'}>
                 <span class="mono">[{r.op.toUpperCase()}] Slot {r.slot}: {r.path}</span>
-                <span class="caption">{r.ok ? 'OK' : `Failed (Exit ${r.exit})`}</span>
+                <span class="caption">{r.ok ? (r.verified !== false ? 'Written & Verified' : 'Written (Read-back Unverified)') : `Failed (Exit ${r.exit})`}</span>
               </li>
             {/each}
           </ul>

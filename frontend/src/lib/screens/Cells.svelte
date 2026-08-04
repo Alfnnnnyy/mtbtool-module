@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../bridge';
+  import { rpc } from '../bridge';
   import { Play, Square, Activity, Zap } from 'lucide-svelte';
 
   interface CellItem {
@@ -64,7 +64,7 @@
   async function fetchCells() {
     if (document.hidden || !pollingActive) return;
     try {
-      const res = await api('cells get', { slot: String(slot) }) as CellsResponse;
+      const res = await rpc('cells.get', { slot }) as CellsResponse;
       if (res && res.ok) {
         lteCells = res.lte || [];
         nrCells = res.nr || [];
