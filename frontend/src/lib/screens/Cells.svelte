@@ -54,6 +54,10 @@
     }
   }
 
+  function fmt1(v?: number): string {
+    return v === undefined || v === null || Number.isNaN(v) ? 'N/A' : v.toFixed(1);
+  }
+
   function getRsrpColorClass(rsrp?: number): string {
     if (rsrp === undefined || rsrp === null) return 'text-muted';
     if (rsrp > -90) return 'text-ok';
@@ -171,11 +175,11 @@
             <div class="metric"><span class="caption">PCI:</span> <span class="mono">{cell.pci ?? 'N/A'}</span></div>
             <div class="metric">
               <span class="caption">RSRP:</span>
-              <span class={`mono ${getRsrpColorClass(cell.rsrp)}`}>{cell.rsrp ?? 'N/A'} dBm</span>
+              <span class={`mono ${getRsrpColorClass(cell.rsrp)}`}>{fmt1(cell.rsrp)} dBm</span>
             </div>
-            <div class="metric"><span class="caption">RSRQ:</span> <span class="mono">{cell.rsrq ?? 'N/A'} dB</span></div>
-            <div class="metric"><span class="caption">RSSI:</span> <span class="mono">{cell.rssi ?? 'N/A'} dBm</span></div>
-            <div class="metric"><span class="caption">SNR:</span> <span class="mono">{cell.snr ?? 'N/A'} dB</span></div>
+            <div class="metric"><span class="caption">RSRQ:</span> <span class="mono">{fmt1(cell.rsrq)} dB</span></div>
+            <div class="metric"><span class="caption">RSSI:</span> <span class="mono">{fmt1(cell.rssi)} dBm</span></div>
+            <div class="metric"><span class="caption">SNR:</span> <span class="mono">{fmt1(cell.snr)} dB</span></div>
           </div>
         </div>
       {/each}
@@ -200,9 +204,9 @@
           <div class="metrics-grid">
             <div class="metric">
               <span class="caption">RSRP:</span>
-              <span class={`mono ${getRsrpColorClass(cell.rsrp)}`}>{cell.rsrp ?? 'N/A'} dBm</span>
+              <span class={`mono ${getRsrpColorClass(cell.rsrp)}`}>{fmt1(cell.rsrp)} dBm</span>
             </div>
-            <div class="metric"><span class="caption">RSRQ:</span> <span class="mono">{cell.rsrq ?? 'N/A'} dB</span></div>
+            <div class="metric"><span class="caption">RSRQ:</span> <span class="mono">{fmt1(cell.rsrq)} dB</span></div>
           </div>
         </div>
       {/each}

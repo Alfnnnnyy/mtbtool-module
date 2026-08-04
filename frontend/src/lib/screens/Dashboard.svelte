@@ -29,6 +29,7 @@ interface ProbeResult {
   let latestBackup = $state<BackupItem | null>(null);
   let error = $state<string | null>(null);
   let restartingModem = $state(false);
+  let showAdvanced = $state(false);
   let modemResult = $state<string | null>(null);
 
   async function loadDashboard() {
@@ -93,7 +94,11 @@ interface ProbeResult {
     </div>
   </div>
 
-  <div class="card" style="margin-top: 12px;">
+  <button class="btn btn-ghost" style="margin-top: 12px; width: 100%; justify-content: space-between;" onclick={() => showAdvanced = !showAdvanced}>
+    <span class="section-label">ADVANCED DIAGNOSTICS</span><span>{showAdvanced ? '▲' : '▼'}</span>
+  </button>
+  {#if showAdvanced}
+  <div class="card" style="margin-top: 4px;">
     <div class="section-label">BRIDGE DIAGNOSTICS</div>
     <div class="caption mono" style="display: grid; gap: 4px; margin-top: 6px;">
       <span>bridge: {$bridgeStatus.detected}</span>
@@ -104,6 +109,7 @@ interface ProbeResult {
       <span>mtbctl: <span class="mono">{MTBCTL_PATH}</span> v{$bridgeStatus.selfTest.version || '?'}</span>
     </div>
   </div>
+  {/if}
 
   {#if error}
     <div class="card status-err-card">
@@ -141,7 +147,7 @@ interface ProbeResult {
           <span class={`chip ${isConnected ? 'status-ok' : 'status-err'}`}>
             {isConnected ? 'Connected' : 'Disconnected / Degraded'}
           </span>
-          <span class="mono caption">{probe.mtb_path || '/vendor/bin/mtb'}</span>
+          <span class="mono caption">mtbctl v{probe.mtbctl_version || '?'}</span>
         </div>
       </div>
       <div class="card info-card">

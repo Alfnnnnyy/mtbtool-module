@@ -48,6 +48,7 @@
 
   let slot = $state<number>(0);
   let activeTab = $state<'detected' | 'manual'>('detected');
+  let diagUnsupported = $state(false);
   let loading = $state<boolean>(false);
   let statusMsg = $state<string | null>(null);
   let getResult = $state<BandlockGetResult | null>(null);
@@ -133,15 +134,22 @@
     try {
       const res = await rpc('bandlock.detect', { slot }) as { ok: boolean; error?: string; bands?: { lte?: number[]; nrNsa?: number[]; nrSa?: number[] }; raw_byte_count?: number };
       if (res && res.ok) {
+        diagUnsupported = false;
         selectedLte = new Set(res.bands?.lte || []);
         selectedNrNsa = new Set(res.bands?.nrNsa || []);
         selectedNrSa = new Set(res.bands?.nrSa || []);
         statusMsg = `DIAG Auto-detection complete (${res.raw_byte_count || 0} bytes scanned).`;
       } else {
-        statusMsg = `Band detection unsupported: ${(res && res.error) || 'DIAG response could not be interpreted'} — configure bands manually.`;
+        // peridot: DIAG request format unsupported — never present an empty
+        // band list as a hardware capability result.
+        diagUnsupported = true;
+        activeTab = 'manual';
+        statusMsg = `Auto-detection unsupported on this firmware (${(res && res.error) || 'uninterpretable DIAG response'}). Showing Manual Selection — your current NV read still applies.`;
       }
     } catch (e: unknown) {
-      statusMsg = `Detection error: ${e instanceof Error ? e.message : String(e)}`;
+      diagUnsupported = true;
+      activeTab = 'manual';
+      statusMsg = `Detection error: ${e instanceof Error ? e.message : String(e)} — switched to Manual Selection.`;
     } finally {
       loading = false;
     }
@@ -292,7 +300,7 @@
       class={`segmented-tab ${activeTab === 'detected' ? 'active' : ''}`}
       onclick={() => { activeTab = 'detected'; detectBands(); }}
     >
-      <Radio size={14} /> DIAG Auto-Detected
+      <Radio size={14} /> {diagUnsupported ? 'Auto-detection unsupported' : 'DIAG Auto-Detected'}
     </button>
     <button
       class={`segmented-tab ${activeTab === 'manual' ? 'active' : ''}`}

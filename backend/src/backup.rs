@@ -407,6 +407,18 @@ pub fn create_manual_backup(
     if paths.is_empty() {
         return Err("no paths provided for backup create".to_string());
     }
+    if paths.len() > 16 {
+        return Err("backup create supports at most 16 paths".to_string());
+    }
+    // reject duplicate paths BEFORE any read or manifest creation
+    {
+        let mut seen = std::collections::HashSet::new();
+        for p in paths {
+            if !seen.insert(p.clone()) {
+                return Err(format!("duplicate path in backup create: {}", p));
+            }
+        }
+    }
     let _lock = crate::mtb::FileLock::acquire().map_err(|e| e.to_string())?;
 
     let mut entries = Vec::new();

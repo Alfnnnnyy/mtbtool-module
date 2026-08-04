@@ -74,6 +74,9 @@
   // Single NV write / delete state
   let writeHex = $state('');
   let singleActionLoading = $state(false);
+  let deleteReview = $state(false);      // review dialog open
+  let deleteConfirmText = $state('');    // must type DELETE
+  let deleteCurrentBytes = $state<string | null>(null);
   let singleActionMsg = $state<string | null>(null);
   let singleActionRollback = $state<RollbackInfo | null>(null);
 
@@ -133,8 +136,24 @@
     }
   }
 
+  function reviewDeleteNv() {
+    // Prefill/current bytes must be shown; deletion is never one-tap.
+    const current = readResult && !readResult.absent && readResult.bytes ? readResult.bytes : null;
+    deleteCurrentBytes = current;
+    deleteConfirmText = '';
+    deleteReview = true;
+  }
+
+  function closeDeleteReview() {
+    deleteReview = false;
+    deleteConfirmText = '';
+  }
+
   async function handleDeleteNv() {
-    if (!confirm(`Are you sure you want to delete NV item '${fullPath()}' on slot ${slot}?`)) return;
+    // two-step guard: dialog must be open and DELETE typed
+    if (!deleteReview || deleteConfirmText !== 'DELETE') return;
+    deleteReview = false;
+    deleteConfirmText = '';
     singleActionLoading = true;
     singleActionMsg = null;
     singleActionRollback = null;
@@ -292,8 +311,8 @@
         <button class="btn btn-secondary" onclick={handleWriteNv} disabled={singleActionLoading || !writeHex.trim() || !$bridgeStatus.ready}>
           {singleActionLoading ? 'Writing...' : 'Write NV Item'}
         </button>
-        <button class="btn btn-danger" onclick={handleDeleteNv} disabled={singleActionLoading || !$bridgeStatus.ready}>
-          {singleActionLoading ? 'Deleting...' : 'Delete NV Item'}
+        <button class="btn btn-danger" onclick={reviewDeleteNv} disabled={singleActionLoading || !$bridgeStatus.ready || !readResult}>
+          {singleActionLoading ? 'Deleting...' : 'Review Delete'}
         </button>
       </div>
 
@@ -419,6 +438,43 @@
           </ul>
         </div>
       {/if}
+    </div>
+  {/if}
+  {#if deleteReview}
+    <div class="overlay">
+      <div class="dialog">
+        <div class="dialog-header">
+          <h2 style="color: var(--danger);">Review NV Delete</h2>
+        </div>
+        <div class="danger-zone card">
+          <p class="caption" style="display: grid; gap: 4px;">
+            <span>Path: <span class="mono">{fullPath()}</span></span>
+            <span>Slot: {slot}</span>
+            <span>Current bytes: <span class="mono">{deleteCurrentBytes || '(unreadable — cannot confirm delete)'}</span></span>
+          </p>
+          <p class="caption" style="margin-top: 6px;">
+            A backup of the current value is created before deletion, and the
+            delete is read-back verified. Type <strong>DELETE</strong> to arm the button.
+          </p>
+          <input
+            type="text"
+            class="input mono"
+            bind:value={deleteConfirmText}
+            placeholder="Type DELETE"
+            style="margin-top: 8px;"
+          />
+        </div>
+        <div class="dialog-actions">
+          <button class="btn btn-secondary" onclick={closeDeleteReview}>Cancel</button>
+          <button
+            class="btn btn-danger"
+            onclick={handleDeleteNv}
+            disabled={deleteConfirmText !== 'DELETE' || !deleteCurrentBytes}
+          >
+            Delete NV Item
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>

@@ -15,7 +15,7 @@ import { exec as ksuExec } from 'kernelsu';
 import { writable } from 'svelte/store';
 
 export class ApiError extends Error {
-  constructor(message: string, public cause?: unknown, public stderr?: string) {
+  constructor(message: string, public cause?: unknown, public stderr?: string, public payload?: unknown) {
     super(message);
     this.name = 'ApiError';
   }
@@ -191,26 +191,31 @@ export async function rpc(method: string, params?: Record<string, unknown>): Pro
   const cmd = `${MTBCTL_PATH} rpc --b64 ${b64Payload}`;
 
   const res = await runExec(cmd);
-  if (res.errno !== 0) {
-    throw new ApiError(`Exec failed (errno ${res.errno})`, undefined, res.stderr);
-  }
 
-  let parsed: unknown;
+  // Parse stdout FIRST even when errno != 0: the backend prints valid JSON
+  // and exits 1 when the response is ok:false (e.g. features.check with
+  // failed_paths). Throwing before parsing would discard that payload.
+  let parsed: unknown = null;
+  let parseErr = '';
   try {
     parsed = JSON.parse(res.stdout);
   } catch (err: unknown) {
-    throw new ApiError(
-      `Failed to parse RPC JSON response: ${err instanceof Error ? err.message : String(err)}`,
-      err,
-      res.stderr,
-    );
+    parseErr = err instanceof Error ? err.message : String(err);
   }
 
   if (parsed && typeof parsed === 'object') {
     const r = parsed as { ok?: boolean; error?: string };
     if (r.ok === false) {
-      throw new ApiError(r.error || 'RPC command returned ok: false', undefined, res.stderr);
+      // Partial results survive: screens read e.payload for ok:false data
+      // (features list, failed_paths, rollback, ...), plus diagnostics.
+      throw new ApiError(r.error || 'RPC command returned ok: false', undefined, res.stderr, parsed);
     }
+    return parsed;
   }
-  return parsed;
+
+  // Generic failure only when there is no JSON at all.
+  if (res.errno !== 0) {
+    throw new ApiError(`Exec failed (errno ${res.errno})`, undefined, res.stderr);
+  }
+  throw new ApiError(`mtbctl returned no JSON: ${parseErr}`, undefined, res.stderr);
 }

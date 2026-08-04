@@ -6,6 +6,37 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-08-04
+
+### Fixed — safety-critical UX (on-device review, 4 release blockers)
+- **NR mode selector no longer writes on tap** (caused 2 accidental modem
+  writes on device): tapping an option only sets a local PENDING selection;
+  the UI shows Current → Pending, target byte/path/slot, a backup notice and
+  an explicit "Preview & Apply 5G Mode Change" button; after apply the mode
+  is re-read and verified; on failure the pending selection reverts and the
+  current modem value is untouched.
+- **NV Delete is two-step**: first button is "Review Delete" (disabled until
+  the current NV was read); the dialog shows path, slot and current bytes and
+  requires typing DELETE to arm execution.
+- **Backup restore is two-step**: restore starts with a read-only verify
+  (backup ID, per-entry integrity + live matches_current); the dialog
+  requires typing RESTORE; the one-tap "Restore Latest Backup Now" and
+  inaccurate "latest.json" wording are gone (the backend resolves the newest
+  manifest dynamically).
+- **errno handling no longer hides valid JSON** (features.check partial
+  results were discarded as "Exec failed (errno 1)"): the bridge parses
+  stdout FIRST; ok:false payloads arrive as ApiError.payload and screens
+  render the partial feature list + failed paths. status:"error" features
+  disable their mutation buttons.
+- **Peridot DIAG UX**: unsupported detection auto-switches to Manual
+  Selection with an "Auto-detection unsupported on this firmware" label —
+  an empty band list is never presented as a capability result; Apply stays
+  disabled until current NV reads succeed.
+- **UX cleanup**: Cells signal values rounded to one decimal (e.g. -98.6 dBm);
+  Bridge Diagnostics collapsed under an Advanced Diagnostics toggle; backend
+  status card shows `mtbctl vX`; backup.create enforces 1..16 paths and
+  rejects duplicate paths before any read or manifest creation.
+
 ## [1.0.9] - 2026-08-04
 
 ### Fixed — WebUI bridge release blocker (on-device, POCO F6)

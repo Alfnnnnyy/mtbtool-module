@@ -45,14 +45,14 @@
   let loading = $state(false);
   let backups = $state<BackupItem[]>([]);
   let statusMsg = $state<string | null>(null);
-  let restoringId = $state<string | null>(null);
   let creatingSnapshot = $state(false);
   let verifyingId = $state<string | null>(null);
   let verifyResult = $state<string | null>(null);
 
   // Emergency Modal Confirm
-  let showEmergencyModal = $state(false);
-  let emergencyConfirming = $state(false);
+  let restoreReview = $state<{ id: string; isEmergency: boolean; verify: { ok: boolean; entries: Array<{ path: string; integrity: boolean; matches_current: boolean }> } } | null>(null);
+  let restoreConfirmText = $state('');
+  let restoringId = $state<string | null>(null);
 
   async function loadBackups() {
     loading = true;
@@ -115,10 +115,27 @@
     }
   }
 
+  async function openRestoreReview(id: string, isEmergency = false) {
+    statusMsg = null;
+    try {
+      const res = await rpc('backup.verify', { id }) as { ok: boolean; id?: string; entries?: Array<{ path: string; integrity: boolean; matches_current: boolean }> };
+      restoreReview = { id, isEmergency, verify: { ok: !!res?.ok, entries: res?.entries || [] } };
+      restoreConfirmText = '';
+    } catch (e: unknown) {
+      statusMsg = `Cannot verify backup before restore: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
+  function closeRestoreReview() {
+    restoreReview = null;
+    restoreConfirmText = '';
+  }
+
   async function handleRestore(id: string) {
-    if (!confirm(`Are you sure you want to restore backup '${id}'? Modem NV items will be rewritten.`)) {
+    if (!restoreReview || restoreReview.id !== id || restoreConfirmText !== 'RESTORE') {
       return;
     }
+    closeRestoreReview();
     restoringId = id;
     statusMsg = null;
     try {
@@ -140,25 +157,24 @@
   }
 
   async function handleEmergencyRestore() {
-    emergencyConfirming = true;
+    restoringId = 'latest';
     statusMsg = null;
     try {
       const res = await rpc('backup.restore', { id: 'latest' }) as RestoreResult;
       const restoredList = res?.restored || [];
       const allOkAndVerified = res && res.ok && restoredList.length > 0 && restoredList.every(r => r.ok && r.verified === true);
       if (allOkAndVerified) {
-        statusMsg = 'EMERGENCY RESTORE COMPLETE: latest.json backup payload rewritten and verified on modem!';
+        statusMsg = 'EMERGENCY RESTORE COMPLETE: latest backup rewritten and verified on modem!';
       } else {
         let msg = res?.error || 'Emergency restore failed (partial restore or verification error)';
         if (res?.rollback) msg += ' (rolled back)';
         statusMsg = msg;
-        showEmergencyModal = false;
         await loadBackups();
       }
     } catch (e: unknown) {
       statusMsg = `Emergency restore error: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
-      emergencyConfirming = false;
+      restoringId = null;
     }
   }
 
@@ -225,7 +241,7 @@
             </button>
             <button
               class="btn btn-secondary"
-              onclick={() => handleRestore(item.id)}
+              onclick={() => openRestoreReview(item.id)}
               disabled={restoringId === item.id || !$bridgeStatus.ready}
             >
               <RotateCcw size={16} /> {restoringId === item.id ? 'Restoring...' : 'Restore'}
@@ -247,29 +263,44 @@
         </p>
       </div>
     </div>
-    <button class="btn btn-danger" onclick={() => showEmergencyModal = true} disabled={!$bridgeStatus.ready}>
-      Restore Latest Backup Now
+    <button class="btn btn-danger" onclick={() => openRestoreReview('latest', true)} disabled={!$bridgeStatus.ready || backups.length === 0}>
+      Review & Restore Latest Backup
     </button>
   </div>
 
-  <!-- Emergency Restore Modal -->
-  {#if showEmergencyModal}
+  {#if restoreReview && restoreReview.verify}
+    {@const review = restoreReview}
     <div class="overlay">
       <div class="dialog">
         <div class="dialog-header">
-          <h2 style="color: var(--danger);">Confirm Emergency Restore</h2>
+          <h2 style="color: var(--warning);">Review Restore</h2>
         </div>
         <div class="danger-zone card">
-          <p class="caption">
-            This will overwrite all affected modem NV items with the values stored in <code>latest.json</code>. Use this if a bad NV write caused modem instability or loss of network signal.
+          <p class="caption" style="display: grid; gap: 4px;">
+            <span>Backup ID: <span class="mono">{review.id}</span></span>
+            <span>{review.verify.entries.length} entr(ies)</span>
           </p>
+          <div class="mono caption" style="margin-top: 6px; display: grid; gap: 2px; max-height: 160px; overflow: auto;">
+            {#each review.verify.entries as e}
+              <span style="color: {e.integrity && e.matches_current ? 'var(--success)' : 'var(--danger)'};">
+                {e.path.split('/').pop()} — {e.integrity ? 'intact' : 'BAD'} / {e.matches_current ? 'matches current' : 'MISMATCHES current'}
+              </span>
+            {/each}
+          </div>
+          <p class="caption" style="margin-top: 6px;">
+            Type <strong>RESTORE</strong> to arm. Every entry is verified before
+            writing; failures roll back automatically.
+          </p>
+          <input type="text" class="input mono" bind:value={restoreConfirmText} placeholder="Type RESTORE" style="margin-top: 8px;" />
         </div>
         <div class="dialog-actions">
-          <button class="btn btn-secondary" onclick={() => showEmergencyModal = false} disabled={emergencyConfirming}>
-            Cancel
-          </button>
-          <button class="btn btn-danger" onclick={handleEmergencyRestore} disabled={emergencyConfirming}>
-            {emergencyConfirming ? 'Executing Restore...' : 'Confirm Emergency Restore'}
+          <button class="btn btn-secondary" onclick={closeRestoreReview}>Cancel</button>
+          <button
+            class="btn btn-warning"
+            onclick={() => handleRestore(review.id)}
+            disabled={restoreConfirmText !== 'RESTORE' || !review.verify.ok}
+          >
+            Restore Backup
           </button>
         </div>
       </div>

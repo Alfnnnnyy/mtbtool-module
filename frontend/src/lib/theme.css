@@ -359,3 +359,15 @@ html, body {
   border-radius: var(--radius-card);
   padding: var(--space-4);
 }
+
+/* Warning variant for destructive-but-recoverable actions */
+.btn-warning {
+  background-color: var(--warning);
+  color: #1a1300;
+}
+.btn-warning:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.btn-warning:active:not(:disabled) {
+  filter: brightness(0.9);
+}
