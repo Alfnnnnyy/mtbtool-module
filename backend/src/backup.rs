@@ -209,7 +209,10 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
     // No latest.json duplication — the manifest files are the single source
     // of truth (atomic tmp+fsync+rename writes make them reliable).
     let file_path = if id == "latest" {
-        let mut newest: Option<(u64, std::path::PathBuf)> = None;
+        // Resolve the newest manifest. `time` is second-precision and several
+        // backups can share a second, so ties are broken by the millis/nanos
+        // embedded in the id prefix (<millis>_<nanos>_<pid>_<counter>_<reason>).
+        let mut newest: Option<(u64, u64, std::path::PathBuf)> = None;
         if let Ok(rd) = fs::read_dir(&backups_dir) {
             for entry in rd.flatten() {
                 let p = entry.path();
@@ -221,15 +224,22 @@ pub fn get_backup(id: &str) -> Result<Backup, String> {
                 }
                 if let Ok(content) = fs::read_to_string(&p) {
                     if let Ok(b) = serde_json::from_str::<Backup>(&content) {
-                        if newest.as_ref().map(|(t, _)| b.time > *t).unwrap_or(true) {
-                            newest = Some((b.time, p));
+                        let mut parts = b.id.splitn(2, '_');
+                        let millis = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                        let nanos = parts.next().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                        let better = match &newest {
+                            Some((m, n, _)) => millis > *m || (millis == *m && nanos > *n),
+                            None => true,
+                        };
+                        if better {
+                            newest = Some((millis, nanos, p));
                         }
                     }
                 }
             }
         }
         match newest {
-            Some((_, p)) => p,
+            Some((_, _, p)) => p,
             None => return Err("No backups found".to_string()),
         }
     } else if id.ends_with(".json") {

@@ -507,3 +507,33 @@ fn base64url_encode(data: &[u8]) -> String {
     }
     out
 }
+
+#[test]
+fn test_latest_resolves_newest_not_arbitrary() {
+    use mtbctl::backup::{create_backup, get_backup};
+    let tmp_dir = std::env::temp_dir().join(format!("mtbtest_latest_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    env::set_var("MTBTOOL_DIR", tmp_dir.to_str().unwrap());
+
+    // Create several backups quickly (same second possible); IDs embed
+    // millis+nanos so "latest" must resolve to the highest ID, not the
+    // first file read_dir happens to return.
+    for i in 0..5 {
+        let e = BackupEntry::new(0, format!("/nv/item_files/modem/mmode/lte_bandpref{}", i), Some("00".to_string()));
+        create_backup(&format!("burst_{}", i), vec![e]).expect("create backup");
+    }
+
+    let latest = get_backup("latest").expect("resolve latest");
+    let first = latest.id.splitn(2, '_').next().unwrap().parse::<u64>().unwrap();
+    // every backup in the dir must be <= latest by id prefix
+    let dir = std::env::temp_dir().join(format!("mtbtest_latest_{}", std::process::id())).join("backups");
+    for entry in fs::read_dir(&dir).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "latest.json" || !name.ends_with(".json") { continue; }
+        let id = name.trim_end_matches(".json");
+        let m = id.splitn(2, '_').next().unwrap().parse::<u64>().unwrap();
+        assert!(m <= first, "found backup with id {} newer than resolved latest {}", id, latest.id);
+    }
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+}

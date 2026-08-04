@@ -6,6 +6,15 @@ All notable changes to MTB Tool module are documented here. Format based on
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-08-04
+
+### Fixed
+- **`backup restore latest` tie-break**: multiple backups created within the
+  same second are now resolved deterministically by the millis/nanos embedded
+  in the backup ID (previously read_dir order could pick an older backup as
+  "latest" — caught by CI smoke on a different filesystem). Added regression
+  test.
+
 ## [1.0.4] - 2026-08-04
 
 ### Fixed (audit round 4)
